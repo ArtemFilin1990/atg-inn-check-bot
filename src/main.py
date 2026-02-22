@@ -10,6 +10,7 @@ from aiogram.types import BotCommand
 
 from bot import handlers, callbacks
 from clients.dadata import DadataClient
+from clients.nalog import NalogClient
 from services.aggregator import Aggregator
 from services.cache import SQLiteCache
 from services.reference_data import ReferenceData
@@ -53,11 +54,13 @@ async def main():
     await sessions.init()
 
     dadata = DadataClient(token=dadata_token, secret=dadata_secret)
+    nalog = NalogClient(timeout=int(os.environ.get('HTTP_TIMEOUT_SECONDS', '5')))
 
     aggregator = Aggregator(
         dadata=dadata,
         cache=cache,
         ref_data=ref_data,
+        nalog=nalog,
     )
 
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -105,6 +108,7 @@ async def main():
             await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         await dadata.close()
+        await nalog.close()
         await cache.close()
         await ref_data.close()
         await sessions.close()

@@ -4,7 +4,7 @@ from aiogram.types import CallbackQuery
 
 from typing import Optional
 
-from bot.formatters import format_risks
+from bot.formatters import format_risks, format_affiliates
 from bot.keyboards import MAIN_KEYBOARD
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,15 @@ async def cb_risks(query: CallbackQuery, aggregator, sessions):
         return
     data = await aggregator.get_section(inn, 'risks')
     await _send_pages(query, format_risks(inn, data))
+
+
+@router.callback_query(lambda c: c.data == 'connections')
+async def cb_connections(query: CallbackQuery, aggregator, sessions):
+    inn = await _get_inn(query, sessions)
+    if not inn:
+        return
+    affiliates = await aggregator.get_affiliates(inn)
+    await _send_pages(query, format_affiliates(inn, affiliates))
 
 
 @router.callback_query(lambda c: c.data == 'check_another')
