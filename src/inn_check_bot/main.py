@@ -60,13 +60,30 @@ def format_info(info: Dict) -> str:
     status = state.get('status')
     status_name = state.get('name')
     message = f"Название: {name}\nИНН/КПП: {inn}/{kpp}\nОГРН: {ogrn}\nАдрес: {address}\nСтатус: {status_name} ({status})"
+    management = data.get('management')
+    if management:
+        ceo_name = management.get('name')
+        ceo_post = management.get('post')
+        if ceo_name:
+            message += f"\nРуководитель: {f'{ceo_post} ' if ceo_post else ''}{ceo_name}"
     okved = data.get('okved')
     if okved:
         message += f"\nОКВЭД: {okved}"
+    risk_flags = []
+    if status == 'LIQUIDATED':
+        risk_flags.append('⛔ Организация ликвидирована')
+    elif status == 'BANKRUPT':
+        risk_flags.append('⛔ Организация признана банкротом')
+    elif status == 'LIQUIDATING':
+        risk_flags.append('⚠️ Организация в процессе ликвидации')
+    elif status == 'REORGANIZING':
+        risk_flags.append('⚠️ Организация в процессе реорганизации')
+    if risk_flags:
+        message += '\n\nРиски:\n' + '\n'.join(risk_flags)
     return message
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = [['👋 Привет', '🔍 Проверить ИНН']]
+    keyboard = [['🏕️ Старт', '👋 Привет'], ['🔎 Проверить ИНН']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         'Добро пожаловать! Я могу проверить ИНН организации или ИП.\n'
@@ -76,10 +93,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
+    if text == '🏕️ Старт':
+        await start(update, context)
+        return
     if text == '👋 Привет':
         await update.message.reply_text('Привет! Отправьте ИНН для проверки.')
         return
-    if text == '🔍 Проверить ИНН':
+    if text == '🔎 Проверить ИНН':
         await update.message.reply_text('Пожалуйста, отправьте ИНН (10 или 12 цифр).')
         return
     inn = validate_inn(text)
