@@ -35,13 +35,13 @@ This repository contains a Telegram bot for checking Russian organizations or so
 5. Run the bot in polling mode:
 
    ```bash
-   MODE=polling python -m inn_check_bot.main
+   MODE=polling python src/main.py
    ```
 
    Or in webhook mode:
 
    ```bash
-   MODE=webhook WEBHOOK_URL=<your public url> WEBHOOK_PATH=<secret path> python -m inn_check_bot.main
+   MODE=webhook WEBHOOK_URL=<your public url> WEBHOOK_PATH=<secret path> python src/main.py
    ```
 
 6. Deploy to Amvera by building the `Dockerfile` and setting environment variables accordingly.
@@ -49,11 +49,13 @@ This repository contains a Telegram bot for checking Russian organizations or so
 ## Project structure
 
 ```
-src/inn_check_bot/        # Python package
-├─┐ __init__.py
-├─┐ __main__.py
-└─┐ main.py               # entry point
+src/
+├─ bot/                   # aiogram handlers, callbacks, keyboards
+├─ clients/               # external API clients (DaData)
+├─ services/              # aggregation, cache, reference data
+└─ main.py                # entry point
 Dockerfile
+amvera.yml
 requirements.txt
 .env.example
 README.md
