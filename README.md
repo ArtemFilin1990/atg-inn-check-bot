@@ -11,6 +11,7 @@ This repository contains a Telegram bot for checking Russian organizations or so
 - Shows simple risk flags based only on DaData fields (e.g. liquidation status).
 - Supports both polling and webhook modes (configurable via env vars).
 - Caching of results to reduce API calls (TTL 10–30 minutes).
+- **Continuous improvement skill**: after each INN lookup users can rate the result with 👍/👎 inline buttons; freeform feedback can be submitted via `/feedback`.
 
 ## Getting started
 
