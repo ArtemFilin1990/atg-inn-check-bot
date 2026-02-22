@@ -7,5 +7,6 @@ build:
   dockerfile: Dockerfile
 
 run:
+  command: python src/main.py
   persistenceMount: /data
   containerPort: 80
