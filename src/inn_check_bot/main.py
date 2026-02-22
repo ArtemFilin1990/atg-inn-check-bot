@@ -49,6 +49,7 @@ def validate_inn(text: str) -> Optional[str]:
 
 def fetch_dadata(inn: str) -> Optional[Dict]:
     if inn in cache:
+        logger.debug("Cache hit for INN %s", inn)
         return cache[inn]
     token = os.environ.get('DADATA_TOKEN')
     secret = os.environ.get('DADATA_SECRET')
@@ -71,6 +72,7 @@ def fetch_dadata(inn: str) -> Optional[Dict]:
             result = suggestions[0]
             cache[inn] = result
             return result
+        logger.info("DaData returned no suggestions for INN %s", inn)
     except Exception as e:
         logger.exception("Error fetching data from DaData: %s", e)
     return None
@@ -203,6 +205,7 @@ def _after_result_keyboard() -> InlineKeyboardMarkup:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.info("User %s issued /start", update.effective_user.id)
     await update.message.reply_text(
         'Добро пожаловать! Я могу проверить ИНН организации, ИП или физлица.\n'
         'Выберите режим проверки:',
@@ -212,6 +215,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("User %s issued /help", update.effective_user.id)
     await update.message.reply_text(
         'Выберите кнопку для проверки ИНН:\n'
         '🏢 Всё об организации — ИНН из 10 цифр\n'
@@ -239,24 +243,28 @@ async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def ask_org_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data[MODE_KEY] = MODE_ORG
+    logger.info("User %s selected mode %s", update.effective_user.id, MODE_ORG)
     await update.message.reply_text('Введите ИНН организации (10 цифр).')
     return AWAITING_INN
 
 
 async def ask_ip_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data[MODE_KEY] = MODE_IP
+    logger.info("User %s selected mode %s", update.effective_user.id, MODE_IP)
     await update.message.reply_text('Введите ИНН ИП (12 цифр).')
     return AWAITING_INN
 
 
 async def ask_indiv_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data[MODE_KEY] = MODE_INDIV
+    logger.info("User %s selected mode %s", update.effective_user.id, MODE_INDIV)
     await update.message.reply_text('Введите ИНН физлица (12 цифр).')
     return AWAITING_INN
 
 
 async def ask_universal_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data[MODE_KEY] = MODE_UNIVERSAL
+    logger.info("User %s selected mode %s", update.effective_user.id, MODE_UNIVERSAL)
     await update.message.reply_text('Введите ИНН (10 или 12 цифр).')
     return AWAITING_INN
 
@@ -279,27 +287,31 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     mode = context.user_data.get(MODE_KEY, MODE_UNIVERSAL)
     inn_raw = re.sub(r'\D', '', text)
+    user_id = update.effective_user.id
 
     # Validate length based on mode
     if mode == MODE_ORG:
         if not inn_raw.isdigit() or len(inn_raw) != 10:
+            logger.warning("User %s submitted invalid INN %r (mode=%s)", user_id, inn_raw, mode)
             await update.message.reply_text('ИНН должен содержать 10 цифр без пробелов.')
             return AWAITING_INN
     elif mode in (MODE_IP, MODE_INDIV):
         if not inn_raw.isdigit() or len(inn_raw) != 12:
+            logger.warning("User %s submitted invalid INN %r (mode=%s)", user_id, inn_raw, mode)
             await update.message.reply_text('ИНН должен содержать 12 цифр без пробелов.')
             return AWAITING_INN
     else:  # universal
         if not inn_raw.isdigit() or len(inn_raw) not in (10, 12):
+            logger.warning("User %s submitted invalid INN %r (mode=%s)", user_id, inn_raw, mode)
             await update.message.reply_text('ИНН должен содержать 10 или 12 цифр без пробелов.')
             return AWAITING_INN
 
-    user_id = update.effective_user.id
     logger.info("User %s checking INN %s (mode=%s)", user_id, inn_raw, mode)
     await update.message.reply_text('Ищу информацию, пожалуйста, подождите...')
 
     info = fetch_dadata(inn_raw)
     if not info:
+        logger.info("INN %s not found in DaData (user=%s)", inn_raw, user_id)
         await update.message.reply_text(
             'По указанному ИНН данные не найдены.',
             reply_markup=MAIN_KEYBOARD,
