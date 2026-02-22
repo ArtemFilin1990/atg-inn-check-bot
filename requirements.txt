@@ -6,5 +6,7 @@ tenacity~=8.5
 orjson~=3.10
 python-dotenv~=1.0
 cachetools>=5.3.2
+requests~=2.31
+python-telegram-bot~=20.0
 pytest~=8.3
 pytest-asyncio~=0.24

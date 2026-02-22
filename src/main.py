@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 
 from bot import handlers, callbacks
 from clients.checko import CheckoClient
@@ -42,6 +43,8 @@ async def main():
         logger.warning("CHECKO_API_KEY is not set; Checko requests will fail")
     dadata_token = os.environ.get('DADATA_API_KEY') or os.environ.get('DADATA_TOKEN', '')
     dadata_secret = os.environ.get('DADATA_SECRET', '')
+    if not dadata_token:
+        logger.warning("DADATA_API_KEY/DADATA_TOKEN is not set; DaData requests will fail")
 
     # Initialise services
     cache = SQLiteCache()
@@ -66,6 +69,12 @@ async def main():
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
+
+    await bot.set_my_commands([
+        BotCommand(command='start', description='Начать работу с ботом'),
+        BotCommand(command='help', description='Помощь и список режимов'),
+        BotCommand(command='feedback', description='Отправить предложение или замечание'),
+    ])
 
     # Register middleware
     middleware = ServiceMiddleware(aggregator=aggregator, sessions=sessions)

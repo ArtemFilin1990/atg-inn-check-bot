@@ -1,3 +1,4 @@
+import html
 import os
 import re
 from datetime import datetime, timezone
@@ -6,6 +7,13 @@ from typing import Optional
 _RE_NON_DIGITS = re.compile(r'\D')
 _STRICT = os.environ.get('STRICT_INN_CHECK', '').lower() == 'true'
 PAGE_LIMIT = 3800  # chars per Telegram message window
+
+
+def _e(v) -> str:
+    """HTML-escape a dynamic value for safe use in HTML parse-mode messages."""
+    if v is None:
+        return '—'
+    return html.escape(str(v))
 
 
 def validate_inn(text: str) -> Optional[str]:
@@ -128,16 +136,16 @@ def format_org_card(data: dict) -> str:
         risk_unreliable = 'нет'
 
     return (
-        f'🏢 {name}\n'
-        f'Статус: {status}\n\n'
+        f'🏢 {_e(name)}\n'
+        f'Статус: {_e(status)}\n\n'
         f'ИНН/КПП: {inn} / {kpp}\n'
         f'ОГРН: {ogrn}\n'
         f'Дата регистрации: {reg_date}\n'
-        f'Адрес (ЕГРЮЛ): {address}\n'
-        f'Руководитель: {ceo}\n'
-        f'ОКВЭД: {okved_str}\n'
+        f'Адрес (ЕГРЮЛ): {_e(address)}\n'
+        f'Руководитель: {_e(ceo)}\n'
+        f'ОКВЭД: {_e(okved_str)}\n'
         f'УК: {capital}\n'
-        f'Налогообложение: {tax}\n\n'
+        f'Налогообложение: {_e(tax)}\n\n'
         f'⚠️ Риски (сводка):\n'
         f'• Массовый адрес: —\n'
         f'• Массовый руководитель: —\n'
@@ -173,13 +181,13 @@ def format_ip_card(data: dict) -> str:
         risk = '\n⚠️ ИП в процессе ликвидации'
 
     return (
-        f'🧑‍💼 ИП: {name}\n'
-        f'Статус: {status}\n\n'
+        f'🧑‍💼 ИП: {_e(name)}\n'
+        f'Статус: {_e(status)}\n\n'
         f'ИНН: {inn}\n'
         f'ОГРНИП: {ogrn}\n'
         f'Дата регистрации: {reg_date}\n'
-        f'Регион: {address}\n'
-        f'ОКВЭД: {okved}'
+        f'Регион: {_e(address)}\n'
+        f'ОКВЭД: {_e(okved)}'
         f'{risk}'
     )
 
@@ -194,8 +202,8 @@ def format_individual_card(data: dict) -> str:
     return (
         f'🪪 Физлицо\n'
         f'ИНН: {inn}\n'
-        f'Статус в налоговой: {status}\n'
-        f'Регион регистрации: {address}'
+        f'Статус в налоговой: {_e(status)}\n'
+        f'Регион регистрации: {_e(address)}'
     )
 
 
@@ -220,7 +228,7 @@ def format_courts(inn: str, data: dict) -> list:
         date = c.get('date') or '—'
         status = c.get('status') or '—'
         amount = _fmt_money(c.get('amount')) if c.get('amount') else '—'
-        lines.append(f'{i}) {num} — {court} — {date} — {status} — {amount}')
+        lines.append(f'{i}) {_e(num)} — {_e(court)} — {date} — {_e(status)} — {amount}')
     return paginate('\n'.join(lines))
 
 
@@ -243,7 +251,7 @@ def format_debts(inn: str, data: dict) -> list:
         subject = item.get('subject') or '—'
         amount = _fmt_money(item.get('amount')) if item.get('amount') else '—'
         region = item.get('region') or '—'
-        lines.append(f'{i}) {date} — {subject} — {amount} — {region}')
+        lines.append(f'{i}) {date} — {_e(subject)} — {amount} — {_e(region)}')
     return paginate('\n'.join(lines))
 
 
@@ -258,7 +266,7 @@ def format_checks(inn: str, data: dict) -> list:
             kind = item.get('type') or item.get('kind') or '—'
             period = item.get('period') or item.get('date') or '—'
             result = item.get('result') or '—'
-            lines.append(f'{i}) {kind} — {period} — результат: {result}')
+            lines.append(f'{i}) {_e(kind)} — {period} — результат: {_e(result)}')
     return paginate('\n'.join(lines))
 
 
@@ -272,10 +280,10 @@ def format_bankruptcy(inn: str, data: dict) -> list:
     date = data.get('date') or '—'
     text = (
         f'🏦 Банкротство по {inn}\n\n'
-        f'Статус: {status}\n'
-        f'Дело: {case_num}\n'
-        f'Суд: {court}\n'
-        f'Процедура: {stage} (с {date})'
+        f'Статус: {_e(status)}\n'
+        f'Дело: {_e(case_num)}\n'
+        f'Суд: {_e(court)}\n'
+        f'Процедура: {_e(stage)} (с {date})'
     )
     return [text]
 
@@ -298,7 +306,7 @@ def format_tenders(inn: str, data: dict) -> list:
             date = item.get('date') or '—'
             amount = _fmt_money(item.get('amount')) if item.get('amount') else '—'
             customer = item.get('customer') or '—'
-            lines.append(f'{i}) {num} — {date} — {amount} — {customer}')
+            lines.append(f'{i}) {_e(num)} — {date} — {amount} — {_e(customer)}')
     return paginate('\n'.join(lines))
 
 
@@ -330,7 +338,7 @@ def format_connections(inn: str, data: dict) -> list:
         for o in owners[:5]:
             name = o.get('name') or o.get('fio') or '—'
             share = o.get('share') or o.get('percent') or '—'
-            lines.append(f'• {name} — {share}%')
+            lines.append(f'• {_e(name)} — {share}%')
     if related:
         lines.append('')
         lines.append('Связанные компании:')
@@ -338,7 +346,7 @@ def format_connections(inn: str, data: dict) -> list:
             rname = r.get('name') or '—'
             rinn = r.get('inn') or '—'
             role = r.get('role') or '—'
-            lines.append(f'{i}) {rname} — {rinn} — роль: {role}')
+            lines.append(f'{i}) {_e(rname)} — {rinn} — роль: {_e(role)}')
     if not owners and not related:
         lines.append('Данные не найдены.')
     return paginate('\n'.join(lines))

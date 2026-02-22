@@ -3,7 +3,10 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
+from typing import Dict, List, Optional, Any, Union
 from cachetools import TTLCache
+import requests
+from dadata import DadataAsync
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
@@ -395,7 +398,7 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         else:
             message = format_ip_info(info)
 
-
+    await update.message.reply_text(message, reply_markup=_after_result_keyboard(inn_raw))
     return ConversationHandler.END
 
 
