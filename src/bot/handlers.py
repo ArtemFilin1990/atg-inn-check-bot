@@ -9,6 +9,7 @@ from bot.keyboards import MAIN_KEYBOARD, NAV_KEYBOARD, ORG_RESULT_KEYBOARD, SIMP
 from bot.formatters import validate_inn, format_org_card, format_ip_card, format_individual_card, paginate
 
 logger = logging.getLogger(__name__)
+router = Router()
 
 def _pick_card_format(mode: str, query: str, card_data: dict):
     """Return (formatted_text, keyboard) based on mode and entity type."""
