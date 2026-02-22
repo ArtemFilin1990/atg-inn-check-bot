@@ -3,7 +3,6 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional, Dict
-import httpx
 from dadata import DadataAsync
 from cachetools import TTLCache
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
@@ -38,6 +37,15 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [['🏢 Всё об организации', '👤 Всё об ИП'], ['🧑 Физлицо', '🔎 Проверить ИНН']],
     resize_keyboard=True,
 )
+
+def _after_result_keyboard(inn: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton('👍', callback_data=f'feedback:helpful:{inn}'),
+            InlineKeyboardButton('👎', callback_data=f'feedback:not_helpful:{inn}'),
+        ],
+        [InlineKeyboardButton('Проверить другой ИНН', callback_data='check_another')],
+    ])
 
 # Button labels used to detect mode switches inside the conversation
 _MODE_BUTTONS = {'🏢 Всё об организации', '👤 Всё об ИП', '🧑 Физлицо', '🔎 Проверить ИНН'}
@@ -191,9 +199,6 @@ def format_info(info: Dict) -> str:
     return format_org_info(info)
 
 
-n
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info("User %s issued /start", update.effective_user.id)
     await update.message.reply_text(
@@ -299,7 +304,19 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info("User %s checking INN %s (mode=%s)", user_id, inn_raw, mode)
     await update.message.reply_text('Ищу информацию, пожалуйста, подождите...')
 
-    info = await fetch_dadata(inn_raw, context.bot_data['dadata_client'])
+    dadata_client = context.bot_data.get('dadata_client')
+    if dadata_client is None:
+        logger.error(
+            "DaData client is not configured in bot_data; cannot process INN %s (user=%s)",
+            inn_raw, user_id,
+        )
+        await update.message.reply_text(
+            'Сервис проверки ИНН временно недоступен. Пожалуйста, попробуйте позже.',
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return ConversationHandler.END
+
+    info = await fetch_dadata(inn_raw, dadata_client)
     if not info:
         logger.info("INN %s not found in DaData (user=%s)", inn_raw, user_id)
         await update.message.reply_text(
