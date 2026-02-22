@@ -16,7 +16,7 @@ router = Router()
 
 _RE_PERSON_FIO = re.compile(r'^[^\d]+$')
 _REQUEST_INTERVAL_SECONDS = 1.0
-_JSON_CHUNK = 3600
+_JSON_CHUNK_SIZE = 3600
 
 MODE_LEGAL = 'LEGAL'
 MODE_INDIVIDUAL = 'INDIVIDUAL'
@@ -65,7 +65,7 @@ def _build_person_keyboard(suggestions: list) -> InlineKeyboardMarkup:
 def _json_pages(suggestions: list) -> list[str]:
     payload = {'suggestions': suggestions}
     raw = json.dumps(payload, ensure_ascii=False, indent=2)
-    return [raw[i:i + _JSON_CHUNK] for i in range(0, len(raw), _JSON_CHUNK)] or ['{}']
+    return [raw[i:i + _JSON_CHUNK_SIZE] for i in range(0, len(raw), _JSON_CHUNK_SIZE)] or ['{}']
 
 
 async def _check_rate_limit(user_id: int, sessions) -> bool:
@@ -83,7 +83,9 @@ async def _send_card(message: Message, mode: str, card_data: dict, sessions, use
         await sessions.set_field(user_id, 'last_inn', resolved_inn)
 
     text_out, keyboard = _pick_card_format(mode, card_data)
-    suggestions = card_data.get('suggestions') or [card_data.get('dadata') or {}]
+    suggestions = card_data.get('suggestions') or []
+    if not suggestions and card_data.get('dadata'):
+        suggestions = [card_data['dadata']]
     if len(suggestions) > 1:
         text_out += f'\n\nНайдено карточек: {len(suggestions)}'
 
