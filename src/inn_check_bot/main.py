@@ -3,7 +3,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional, Dict
-import requests
+import httpx
 from cachetools import TTLCache
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -18,6 +18,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 cache = TTLCache(maxsize=1000, ttl=int(os.environ.get('CACHE_TTL', '600')))
+
+_RE_NON_DIGITS = re.compile(r'\D')
 
 feedback_stats: Dict[str, int] = {'helpful': 0, 'not_helpful': 0}
 
@@ -41,13 +43,13 @@ _MODE_BUTTONS = {'🏢 Всё об организации', '👤 Всё об И
 
 
 def validate_inn(text: str) -> Optional[str]:
-    inn = re.sub(r'\D', '', text)
+    inn = _RE_NON_DIGITS.sub('', text)
     if inn.isdigit() and len(inn) in (10, 12):
         return inn
     return None
 
 
-def fetch_dadata(inn: str) -> Optional[Dict]:
+async def fetch_dadata(inn: str) -> Optional[Dict]:
     if inn in cache:
         logger.debug("Cache hit for INN %s", inn)
         return cache[inn]
@@ -64,15 +66,16 @@ def fetch_dadata(inn: str) -> Optional[Dict]:
     }
     payload = {'query': inn, 'branch_type': 'MAIN'}
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        suggestions = data.get('suggestions')
-        if suggestions:
-            result = suggestions[0]
-            cache[inn] = result
-            return result
-        logger.info("DaData returned no suggestions for INN %s", inn)
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, json=payload, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            suggestions = data.get('suggestions')
+            if suggestions:
+                result = suggestions[0]
+                cache[inn] = result
+                return result
+            logger.info("DaData returned no suggestions for INN %s", inn)
     except Exception as e:
         logger.exception("Error fetching data from DaData: %s", e)
     return None
@@ -198,10 +201,9 @@ def format_info(info: Dict) -> str:
     return format_org_info(info)
 
 
-def _after_result_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton('🔁 Проверить другой ИНН', callback_data='check_another')]]
-    )
+_AFTER_RESULT_KEYBOARD = InlineKeyboardMarkup(
+    [[InlineKeyboardButton('🔁 Проверить другой ИНН', callback_data='check_another')]]
+)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -286,7 +288,7 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return await ask_universal_inn(update, context)
 
     mode = context.user_data.get(MODE_KEY, MODE_UNIVERSAL)
-    inn_raw = re.sub(r'\D', '', text)
+    inn_raw = _RE_NON_DIGITS.sub('', text)
     user_id = update.effective_user.id
 
     # Validate length based on mode
@@ -309,7 +311,7 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info("User %s checking INN %s (mode=%s)", user_id, inn_raw, mode)
     await update.message.reply_text('Ищу информацию, пожалуйста, подождите...')
 
-    info = fetch_dadata(inn_raw)
+    info = await fetch_dadata(inn_raw)
     if not info:
         logger.info("INN %s not found in DaData (user=%s)", inn_raw, user_id)
         await update.message.reply_text(
@@ -331,7 +333,7 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         else:
             message = format_ip_info(info)
 
-    await update.message.reply_text(message, reply_markup=_after_result_keyboard())
+    await update.message.reply_text(message, reply_markup=_AFTER_RESULT_KEYBOARD)
     return ConversationHandler.END
 
 
