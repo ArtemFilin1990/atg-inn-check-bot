@@ -198,9 +198,15 @@ def format_info(info: Dict) -> str:
     return format_org_info(info)
 
 
-def _after_result_keyboard() -> InlineKeyboardMarkup:
+def _after_result_keyboard(inn: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton('🔁 Проверить другой ИНН', callback_data='check_another')]]
+        [
+            [
+                InlineKeyboardButton('👍 Полезно', callback_data=f'feedback:helpful:{inn}'),
+                InlineKeyboardButton('👎 Не помогло', callback_data=f'feedback:not_helpful:{inn}'),
+            ],
+            [InlineKeyboardButton('🔁 Проверить другой ИНН', callback_data='check_another')],
+        ]
     )
 
 
@@ -331,7 +337,7 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         else:
             message = format_ip_info(info)
 
-    await update.message.reply_text(message, reply_markup=_after_result_keyboard())
+    await update.message.reply_text(message, reply_markup=_after_result_keyboard(inn_raw))
     return ConversationHandler.END
 
 
