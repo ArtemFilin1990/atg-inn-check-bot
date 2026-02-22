@@ -1,8 +1,9 @@
 import os
+import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Optional, Dict
+from typing import Any, Dict, List, Optional, Union
 import requests
 from cachetools import TTLCache
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
@@ -76,6 +77,64 @@ def fetch_dadata(inn: str) -> Optional[Dict]:
     except Exception as e:
         logger.exception("Error fetching data from DaData: %s", e)
     return None
+
+
+def dadata_find_party(
+    query: str,
+    count: Optional[int] = None,
+    kpp: Optional[str] = None,
+    branch_type: Optional[str] = None,
+    party_type: Optional[str] = None,
+    status: Optional[List[str]] = None,
+) -> Union[List[Dict[str, Any]], Dict[str, str]]:
+    """Search for organisations/IPs by INN or OGRN via the DaData Suggestions API.
+
+    ``party_type`` maps to the ``type`` field in the DaData request body
+    (renamed to avoid shadowing the Python built-in ``type``).
+
+    Returns a list of suggestion dicts on success, or a dict with an ``'error'``
+    key on failure.  The API token is never included in log output.
+    """
+    token = os.environ.get('DADATA_TOKEN')
+    if not token:
+        logger.error("DADATA_TOKEN is not set")
+        return {'error': 'DaData token is not configured'}
+
+    payload: Dict[str, Any] = {'query': query}
+    if count is not None:
+        payload['count'] = count
+    if kpp:
+        payload['kpp'] = kpp
+    if branch_type:
+        payload['branch_type'] = branch_type
+    if party_type:
+        payload['type'] = party_type
+    if status:
+        payload['status'] = status
+
+    url = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party'
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': f'Token {token}',
+    }
+
+    try:
+        resp = requests.post(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+            headers=headers,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json().get('suggestions', [])
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else 'unknown'
+        logger.error("DaData HTTP error for query %s: %s", query, status_code)
+        return {'error': f'HTTP error {status_code}'}
+    except Exception:
+        logger.exception("Error fetching data from DaData for query %s", query)
+        return {'error': 'Request failed'}
 
 
 def _format_date(ts_ms: Optional[int]) -> str:
