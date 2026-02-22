@@ -4,8 +4,8 @@ import re
 from typing import Optional, Dict
 import requests
 from cachetools import TTLCache
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -14,6 +14,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 cache = TTLCache(maxsize=1000, ttl=int(os.environ.get('CACHE_TTL', '600')))
+
+feedback_stats: Dict[str, int] = {'helpful': 0, 'not_helpful': 0}
+
+FEEDBACK_WAITING: Dict[int, bool] = {}
 
 def validate_inn(text: str) -> Optional[str]:
     inn = re.sub(r'\D', '', text)
@@ -102,6 +106,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if text == '🔎 Проверить ИНН':
         await update.message.reply_text('Пожалуйста, отправьте ИНН (10 или 12 цифр).')
         return
+    user_id = update.effective_user.id
+    if FEEDBACK_WAITING.pop(user_id, False):
+        logger.info("User feedback from %s: %s", user_id, text)
+        await update.message.reply_text('Спасибо за ваш отзыв! Мы постараемся улучшить бота.')
+        return
     inn = validate_inn(text)
     if not inn:
         await update.message.reply_text('Введите корректный ИНН (10 или 12 цифр).')
@@ -110,12 +119,53 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     info = fetch_dadata(inn)
     if info:
         message = format_info(info)
-        await update.message.reply_text(message)
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton('👍 Полезно', callback_data=f'feedback:helpful:{inn}'),
+                InlineKeyboardButton('👎 Не полезно', callback_data=f'feedback:not_helpful:{inn}'),
+            ]
+        ])
+        await update.message.reply_text(message, reply_markup=keyboard)
     else:
         await update.message.reply_text('Не удалось получить информацию. Попробуйте позже.')
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text('Отправьте ИНН (10 или 12 цифр), чтобы получить сведения о компании или ИП.')
+    await update.message.reply_text(
+        'Отправьте ИНН (10 или 12 цифр), чтобы получить сведения о компании или ИП.\n'
+        'Команда /feedback — отправить предложение по улучшению бота.'
+    )
+
+async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = ' '.join(context.args) if context.args else ''
+    if text:
+        logger.info("User feedback from %s: %s", update.effective_user.id, text)
+        await update.message.reply_text('Спасибо за ваш отзыв! Мы постараемся улучшить бота.')
+    else:
+        FEEDBACK_WAITING[update.effective_user.id] = True
+        await update.message.reply_text('Пожалуйста, напишите ваше предложение или замечание по работе бота.')
+
+async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(':', 2)
+    if len(parts) < 2:
+        return
+    rating = parts[1]
+    if rating not in ('helpful', 'not_helpful'):
+        return
+    inn = parts[2] if len(parts) > 2 else 'unknown'
+    feedback_stats[rating] += 1
+    logger.info(
+        "Feedback '%s' for INN %s from user %s (helpful=%d, not_helpful=%d)",
+        rating, inn, query.from_user.id,
+        feedback_stats.get('helpful', 0), feedback_stats.get('not_helpful', 0),
+    )
+    if rating == 'helpful':
+        reply = '👍 Спасибо! Рады, что информация оказалась полезной.'
+    else:
+        reply = '👎 Спасибо за отзыв! Отправьте /feedback с описанием проблемы, чтобы помочь нам улучшить бота.'
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(reply)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
@@ -127,6 +177,8 @@ def build_application() -> Application:
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('help', help_cmd))
+    app.add_handler(CommandHandler('feedback', feedback_cmd))
+    app.add_handler(CallbackQueryHandler(feedback_callback, pattern=r'^feedback:'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     app.add_error_handler(error_handler)
     return app
