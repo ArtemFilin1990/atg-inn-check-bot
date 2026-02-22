@@ -3,7 +3,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional, Dict
-import requests
+from dadata import DadataAsync
 from cachetools import TTLCache
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -18,6 +18,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 cache = TTLCache(maxsize=1000, ttl=int(os.environ.get('CACHE_TTL', '600')))
+
+_RE_NON_DIGITS = re.compile(r'\D')
 
 feedback_stats: Dict[str, int] = {'helpful': 0, 'not_helpful': 0}
 
@@ -36,18 +38,27 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+def _after_result_keyboard(inn: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton('👍', callback_data=f'feedback:helpful:{inn}'),
+            InlineKeyboardButton('👎', callback_data=f'feedback:not_helpful:{inn}'),
+        ],
+        [InlineKeyboardButton('Проверить другой ИНН', callback_data='check_another')],
+    ])
+
 # Button labels used to detect mode switches inside the conversation
 _MODE_BUTTONS = {'🏢 Всё об организации', '👤 Всё об ИП', '🧑 Физлицо', '🔎 Проверить ИНН'}
 
 
 def validate_inn(text: str) -> Optional[str]:
-    inn = re.sub(r'\D', '', text)
+    inn = _RE_NON_DIGITS.sub('', text)
     if inn.isdigit() and len(inn) in (10, 12):
         return inn
     return None
 
 
-def fetch_dadata(inn: str) -> Optional[Dict]:
+async def fetch_dadata(inn: str, client: DadataAsync) -> Optional[Dict]:
     if inn in cache:
         logger.debug("Cache hit for INN %s", inn)
         return cache[inn]
@@ -56,18 +67,8 @@ def fetch_dadata(inn: str) -> Optional[Dict]:
     if not token or not secret:
         logger.error("DADATA_TOKEN or DADATA_SECRET is not set")
         return None
-    url = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party'
-    headers = {
-        'Authorization': f'Token {token}',
-        'X-Secret': secret,
-        'Content-Type': 'application/json'
-    }
-    payload = {'query': inn, 'branch_type': 'MAIN'}
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        suggestions = data.get('suggestions')
+        suggestions = await client.find_by_id(name="party", query=inn, branch_type="MAIN")
         if suggestions:
             result = suggestions[0]
             cache[inn] = result
@@ -198,18 +199,6 @@ def format_info(info: Dict) -> str:
     return format_org_info(info)
 
 
-def _after_result_keyboard(inn: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton('👍 Полезно', callback_data=f'feedback:helpful:{inn}'),
-                InlineKeyboardButton('👎 Не помогло', callback_data=f'feedback:not_helpful:{inn}'),
-            ],
-            [InlineKeyboardButton('🔁 Проверить другой ИНН', callback_data='check_another')],
-        ]
-    )
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info("User %s issued /start", update.effective_user.id)
     await update.message.reply_text(
@@ -292,7 +281,7 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return await ask_universal_inn(update, context)
 
     mode = context.user_data.get(MODE_KEY, MODE_UNIVERSAL)
-    inn_raw = re.sub(r'\D', '', text)
+    inn_raw = _RE_NON_DIGITS.sub('', text)
     user_id = update.effective_user.id
 
     # Validate length based on mode
@@ -315,7 +304,19 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info("User %s checking INN %s (mode=%s)", user_id, inn_raw, mode)
     await update.message.reply_text('Ищу информацию, пожалуйста, подождите...')
 
-    info = fetch_dadata(inn_raw)
+    dadata_client = context.bot_data.get('dadata_client')
+    if dadata_client is None:
+        logger.error(
+            "DaData client is not configured in bot_data; cannot process INN %s (user=%s)",
+            inn_raw, user_id,
+        )
+        await update.message.reply_text(
+            'Сервис проверки ИНН временно недоступен. Пожалуйста, попробуйте позже.',
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return ConversationHandler.END
+
+    info = await fetch_dadata(inn_raw, dadata_client)
     if not info:
         logger.info("INN %s not found in DaData (user=%s)", inn_raw, user_id)
         await update.message.reply_text(
@@ -337,7 +338,7 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         else:
             message = format_ip_info(info)
 
-    await update.message.reply_text(message, reply_markup=_after_result_keyboard(inn_raw))
+
     return ConversationHandler.END
 
 
@@ -381,7 +382,18 @@ def build_application() -> Application:
     token = os.environ.get('BOT_TOKEN')
     if not token:
         raise RuntimeError('BOT_TOKEN is not set')
-    app = Application.builder().token(token).build()
+
+    async def post_init(app: Application) -> None:
+        dadata_token = os.environ.get('DADATA_TOKEN', '')
+        dadata_secret = os.environ.get('DADATA_SECRET', '')
+        app.bot_data['dadata_client'] = DadataAsync(dadata_token, dadata_secret)
+
+    async def post_shutdown(app: Application) -> None:
+        client: DadataAsync = app.bot_data.get('dadata_client')
+        if client:
+            await client.close()
+
+    app = Application.builder().token(token).post_init(post_init).post_shutdown(post_shutdown).build()
 
     conv_handler = ConversationHandler(
         entry_points=[
