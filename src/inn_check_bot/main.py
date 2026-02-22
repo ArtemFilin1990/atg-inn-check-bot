@@ -191,9 +191,7 @@ def format_info(info: Dict) -> str:
     return format_org_info(info)
 
 
-_AFTER_RESULT_KEYBOARD = InlineKeyboardMarkup(
-    [[InlineKeyboardButton('🔁 Проверить другой ИНН', callback_data='check_another')]]
-)
+n
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -323,7 +321,7 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         else:
             message = format_ip_info(info)
 
-    await update.message.reply_text(message, reply_markup=_AFTER_RESULT_KEYBOARD)
+
     return ConversationHandler.END
 
 
