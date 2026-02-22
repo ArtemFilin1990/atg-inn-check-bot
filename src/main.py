@@ -38,6 +38,8 @@ class ServiceMiddleware:
 async def main():
     token = os.environ['BOT_TOKEN']
     checko_key = os.environ.get('CHECKO_API_KEY', '')
+    if not checko_key:
+        logger.warning("CHECKO_API_KEY is not set; Checko requests will fail")
     dadata_token = os.environ.get('DADATA_API_KEY') or os.environ.get('DADATA_TOKEN', '')
     dadata_secret = os.environ.get('DADATA_SECRET', '')
 

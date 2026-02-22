@@ -10,7 +10,20 @@ from bot.formatters import validate_inn, format_org_card, format_ip_card, format
 
 logger = logging.getLogger(__name__)
 
-router = Router()
+def _pick_card_format(mode: str, query: str, card_data: dict):
+    """Return (formatted_text, keyboard) based on mode and entity type."""
+    is_individual = card_data.get('is_individual', False)
+    entity_type = ((card_data.get('dadata') or {}).get('data') or {}).get('type', '')
+    is_legal = entity_type == 'LEGAL' or len(query) == 10
+
+    if mode == MODE_ORG or (mode == MODE_UNIVERSAL and is_legal):
+        return format_org_card(card_data), ORG_RESULT_KEYBOARD
+    if mode == MODE_IP or (mode == MODE_UNIVERSAL and is_individual):
+        return format_ip_card(card_data), SIMPLE_RESULT_KEYBOARD
+    if mode == MODE_INDIV:
+        return format_individual_card(card_data), SIMPLE_RESULT_KEYBOARD
+    # fallback: treat as org
+    return format_org_card(card_data), ORG_RESULT_KEYBOARD
 
 MODE_ORG = 'org'
 MODE_IP = 'ip'
@@ -148,21 +161,7 @@ async def handle_inn_input(message: Message, state: FSMContext, aggregator, sess
     resolved_inn = card_data.get('inn', query)
     await sessions.set_field(user_id, 'last_inn', resolved_inn)
 
-    is_individual = card_data.get('is_individual', False)
-    entity_type = ((card_data.get('dadata') or {}).get('data') or {}).get('type', '')
-
-    if mode == MODE_ORG or (mode == MODE_UNIVERSAL and (entity_type == 'LEGAL' or len(query) == 10)):
-        text_out = format_org_card(card_data)
-        keyboard = ORG_RESULT_KEYBOARD
-    elif mode == MODE_IP or (mode == MODE_UNIVERSAL and is_individual):
-        text_out = format_ip_card(card_data)
-        keyboard = SIMPLE_RESULT_KEYBOARD
-    elif mode == MODE_INDIV:
-        text_out = format_individual_card(card_data)
-        keyboard = SIMPLE_RESULT_KEYBOARD
-    else:
-        text_out = format_org_card(card_data)
-        keyboard = ORG_RESULT_KEYBOARD
+    text_out, keyboard = _pick_card_format(mode, query, card_data)
 
     pages = paginate(text_out)
     for i, page in enumerate(pages):

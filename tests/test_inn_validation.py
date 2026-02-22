@@ -51,5 +51,40 @@ class TestChecksum(unittest.TestCase):
         self.assertFalse(_inn_checksum_valid('500100732251'))
 
 
+class TestStrictCheck(unittest.TestCase):
+    """Test STRICT_INN_CHECK=true rejects invalid checksums."""
+
+    def setUp(self):
+        os.environ['STRICT_INN_CHECK'] = 'true'
+        # Reload the module so _STRICT is re-evaluated
+        import importlib
+        import bot.formatters as fmt
+        importlib.reload(fmt)
+        from bot.formatters import validate_inn as vi
+        self._vi = vi
+
+    def tearDown(self):
+        os.environ.pop('STRICT_INN_CHECK', None)
+        import importlib
+        import bot.formatters as fmt
+        importlib.reload(fmt)
+
+    def test_strict_rejects_bad_checksum_10(self):
+        self.assertIsNone(self._vi('7707083890'))
+
+    def test_strict_accepts_valid_checksum_10(self):
+        self.assertEqual(self._vi('7707083893'), '7707083893')
+
+    def test_strict_rejects_bad_checksum_12(self):
+        self.assertIsNone(self._vi('500100732251'))
+
+    def test_strict_accepts_valid_checksum_12(self):
+        self.assertEqual(self._vi('500100732259'), '500100732259')
+
+    def test_strict_ogrn_not_checksummed(self):
+        # OGRN (13 digits) is not checksum-validated; just length check
+        self.assertEqual(self._vi('1027700132195'), '1027700132195')
+
+
 if __name__ == '__main__':
     unittest.main()

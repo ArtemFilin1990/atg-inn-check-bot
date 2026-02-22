@@ -78,7 +78,7 @@ class CheckoClient:
                 logger.warning("Checko %s error: %s", endpoint, e)
                 self._cb_failures += 1
                 if self._cb_failures >= _CB_THRESHOLD:
-                    self._cb_open_until = asyncio.get_event_loop().time() + _CB_TIMEOUT_SEC
+                    self._cb_open_until = now + _CB_TIMEOUT_SEC
                 attempt += 1
                 if attempt <= _MAX_RETRIES:
                     await asyncio.sleep(delay)

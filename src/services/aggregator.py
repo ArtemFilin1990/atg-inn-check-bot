@@ -103,6 +103,8 @@ class Aggregator:
             data = _parse_connections(raw)
         elif section == 'risks':
             card = await self.cache.get(f'card|{inn}')
+            if card is None:
+                card = await self.get_card(inn)
             data = _parse_risks(card)
 
         await self.cache.set(cache_key, data, ttl)

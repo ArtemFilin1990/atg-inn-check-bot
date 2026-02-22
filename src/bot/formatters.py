@@ -49,7 +49,7 @@ def _fmt_money(value) -> str:
     if value is None:
         return '—'
     try:
-        return f'{int(value):,}'.replace(',', '\u202f') + ' ₽'
+        return f'{int(value):,}'.replace(',', '\u202f') + ' ₽'  # \u202f = narrow no-break space
     except Exception:
         return str(value)
 
