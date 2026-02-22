@@ -1,49 +1,99 @@
 import logging
+import json
 import re
+import time
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.states import InnForm
 from bot.keyboards import MAIN_KEYBOARD, NAV_KEYBOARD, ORG_RESULT_KEYBOARD, SIMPLE_RESULT_KEYBOARD
-from bot.formatters import validate_inn, format_org_card, format_ip_card, format_individual_card, format_email_result, format_selfemployed, paginate
+from bot.formatters import validate_inn, format_org_card, format_ip_card, paginate
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-_RE_EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+_RE_PERSON_FIO = re.compile(r'^[^\d]+$')
+_REQUEST_INTERVAL_SECONDS = 1.0
+_JSON_CHUNK = 3600
 
-def _pick_card_format(mode: str, query: str, card_data: dict):
-    """Return (formatted_text, keyboard) based on mode and entity type."""
-    is_individual = card_data.get('is_individual', False)
-    entity_type = ((card_data.get('dadata') or {}).get('data') or {}).get('type', '')
-    is_legal = entity_type == 'LEGAL' or len(query) == 10
+MODE_LEGAL = 'LEGAL'
+MODE_INDIVIDUAL = 'INDIVIDUAL'
+MODE_PERSON = 'PERSON'
 
-    if mode == MODE_ORG or (mode == MODE_UNIVERSAL and is_legal):
-        return format_org_card(card_data), ORG_RESULT_KEYBOARD
-    if mode == MODE_IP or (mode == MODE_UNIVERSAL and is_individual):
-        return format_ip_card(card_data), SIMPLE_RESULT_KEYBOARD
-    if mode == MODE_INDIV:
-        return format_individual_card(card_data), SIMPLE_RESULT_KEYBOARD
-    # fallback: treat as org
-    return format_org_card(card_data), ORG_RESULT_KEYBOARD
-
-MODE_ORG = 'org'
-MODE_IP = 'ip'
-MODE_INDIV = 'indiv'
-MODE_UNIVERSAL = 'universal'
-MODE_EMAIL = 'email'
-MODE_SELFEMPLOYED = 'selfemployed'
-
-_BTN_ORG = '🏢 1) Всё об организации'
-_BTN_IP = '🧑‍💼 2) Всё об ИП'
-_BTN_INDIV = '🪪 3) Физлицо'
-_BTN_UNIVERSAL = '🔎 Проверить ИНН'
+_BTN_ORG = '🏢 ООО'
+_BTN_IP = '👤 ИП'
+_BTN_PERSON = '🧍 Физлицо'
 _BTN_BACK = '◀️ Назад'
 _BTN_HOME = '🏠 Домой'
-_BTN_EMAIL = '📧 По email'
-_BTN_SELFEMPLOYED = '🔍 Самозанятый'
+
+
+def _pick_card_format(mode: str, card_data: dict):
+    entity_type = ((card_data.get('dadata') or {}).get('data') or {}).get('type', '')
+    if mode == MODE_LEGAL:
+        return format_org_card(card_data), ORG_RESULT_KEYBOARD
+    if mode == MODE_INDIVIDUAL:
+        return format_ip_card(card_data), SIMPLE_RESULT_KEYBOARD
+    if entity_type == 'INDIVIDUAL':
+        return format_ip_card(card_data), SIMPLE_RESULT_KEYBOARD
+    return format_org_card(card_data), ORG_RESULT_KEYBOARD
+
+
+def _is_valid_person_query(text: str) -> bool:
+    words = [w for w in text.split() if w]
+    if len(words) < 2 or len(words) > 4:
+        return False
+    return bool(_RE_PERSON_FIO.match(text))
+
+
+def _extract_query_for_find_by_id(suggestion: dict) -> str:
+    data = suggestion.get('data') or {}
+    return data.get('inn') or data.get('ogrn') or ''
+
+
+def _build_person_keyboard(suggestions: list) -> InlineKeyboardMarkup:
+    rows = []
+    for i, suggestion in enumerate(suggestions[:10]):
+        data = suggestion.get('data') or {}
+        value = suggestion.get('value') or 'Без названия'
+        inn = data.get('inn') or '—'
+        rows.append([InlineKeyboardButton(text=f'{i + 1}) {value} ({inn})', callback_data=f'person_pick:{i}')])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _json_pages(suggestions: list) -> list[str]:
+    payload = {'suggestions': suggestions}
+    raw = json.dumps(payload, ensure_ascii=False, indent=2)
+    return [raw[i:i + _JSON_CHUNK] for i in range(0, len(raw), _JSON_CHUNK)] or ['{}']
+
+
+async def _check_rate_limit(user_id: int, sessions) -> bool:
+    now = time.time()
+    last_ts = await sessions.get_field(user_id, 'last_request_ts', 0.0)
+    if now - float(last_ts or 0.0) < _REQUEST_INTERVAL_SECONDS:
+        return False
+    await sessions.set_field(user_id, 'last_request_ts', now)
+    return True
+
+
+async def _send_card(message: Message, mode: str, card_data: dict, sessions, user_id: int):
+    resolved_inn = card_data.get('inn') or ''
+    if resolved_inn:
+        await sessions.set_field(user_id, 'last_inn', resolved_inn)
+
+    text_out, keyboard = _pick_card_format(mode, card_data)
+    suggestions = card_data.get('suggestions') or [card_data.get('dadata') or {}]
+    if len(suggestions) > 1:
+        text_out += f'\n\nНайдено карточек: {len(suggestions)}'
+
+    pages = paginate(text_out)
+    for i, page in enumerate(pages):
+        kb = keyboard if i == len(pages) - 1 else None
+        await message.answer(page, reply_markup=kb)
+
+    for chunk in _json_pages(suggestions):
+        await message.answer(f'```json\n{chunk}\n```', parse_mode=None)
 
 
 @router.message(CommandStart())
@@ -53,7 +103,7 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer(
         '🕵️ Агент на связи. Работаем тихо и без лишнего шума.\n'
         'Только легальные данные из официальных источников.\n\n'
-        '🤫 Шёпотом: введи ИНН (10/12 цифр) или выбери режим кнопкой ниже.',
+        '🤫 Выберите режим: ООО, ИП или Физлицо.',
         reply_markup=MAIN_KEYBOARD,
     )
 
@@ -62,10 +112,9 @@ async def cmd_start(message: Message, state: FSMContext):
 async def cmd_help(message: Message):
     await message.answer(
         'Выберите кнопку для проверки:\n'
-        f'{_BTN_ORG} — ИНН из 10 цифр или ОГРН из 13 цифр\n'
-        f'{_BTN_IP} — ИНН из 12 цифр\n'
-        f'{_BTN_INDIV} — ИНН из 12 цифр\n'
-        f'{_BTN_UNIVERSAL} — универсальный режим (10 или 12 цифр)\n\n'
+        f'{_BTN_ORG} — ИНН (10) или ОГРН (13), поиск findById/party с type=LEGAL\n'
+        f'{_BTN_IP} — ИНН (12) или ОГРНИП (15), поиск findById/party с type=INDIVIDUAL\n'
+        f'{_BTN_PERSON} — ФИО, поиск suggest/party и выбор карточки\n\n'
         'Команда /feedback — отправить предложение.',
         reply_markup=MAIN_KEYBOARD,
     )
@@ -84,11 +133,10 @@ async def cmd_feedback(message: Message):
 @router.message(F.text == _BTN_ORG)
 async def ask_org(message: Message, state: FSMContext):
     await state.set_state(InnForm.waiting_inn)
-    await state.update_data(mode=MODE_ORG)
-    logger.info("User %s → mode %s", message.from_user.id, MODE_ORG)
+    await state.update_data(mode=MODE_LEGAL)
+    logger.info("User %s → mode %s", message.from_user.id, MODE_LEGAL)
     await message.answer(
-        '🏢 Организация\n\nВведи:\n• ИНН (10 цифр) или\n• ОГРН (13 цифр)\n\n'
-        'Можно просто вставить число — без пробелов.',
+        '🏢 ООО / юрлицо\n\nВведи:\n• ИНН (10 цифр) или\n• ОГРН (13 цифр)',
         reply_markup=NAV_KEYBOARD,
     )
 
@@ -96,47 +144,17 @@ async def ask_org(message: Message, state: FSMContext):
 @router.message(F.text == _BTN_IP)
 async def ask_ip(message: Message, state: FSMContext):
     await state.set_state(InnForm.waiting_inn)
-    await state.update_data(mode=MODE_IP)
-    logger.info("User %s → mode %s", message.from_user.id, MODE_IP)
-    await message.answer('🧑‍💼 Введи ИНН ИП (12 цифр).', reply_markup=NAV_KEYBOARD)
+    await state.update_data(mode=MODE_INDIVIDUAL)
+    logger.info("User %s → mode %s", message.from_user.id, MODE_INDIVIDUAL)
+    await message.answer('👤 ИП\n\nВведи ИНН (12 цифр) или ОГРНИП (15 цифр).', reply_markup=NAV_KEYBOARD)
 
 
-@router.message(F.text == _BTN_INDIV)
-async def ask_indiv(message: Message, state: FSMContext):
+@router.message(F.text == _BTN_PERSON)
+async def ask_person(message: Message, state: FSMContext):
     await state.set_state(InnForm.waiting_inn)
-    await state.update_data(mode=MODE_INDIV)
-    logger.info("User %s → mode %s", message.from_user.id, MODE_INDIV)
-    await message.answer('🪪 Введи ИНН физлица (12 цифр).', reply_markup=NAV_KEYBOARD)
-
-
-@router.message(F.text == _BTN_UNIVERSAL)
-async def ask_universal(message: Message, state: FSMContext):
-    await state.set_state(InnForm.waiting_inn)
-    await state.update_data(mode=MODE_UNIVERSAL)
-    logger.info("User %s → mode %s", message.from_user.id, MODE_UNIVERSAL)
-    await message.answer('🔎 Введи ИНН (10 или 12 цифр).', reply_markup=NAV_KEYBOARD)
-
-
-@router.message(F.text == _BTN_EMAIL)
-async def ask_email(message: Message, state: FSMContext):
-    await state.set_state(InnForm.waiting_inn)
-    await state.update_data(mode=MODE_EMAIL)
-    logger.info("User %s → mode %s", message.from_user.id, MODE_EMAIL)
-    await message.answer(
-        '📧 Введи email для поиска компании.',
-        reply_markup=NAV_KEYBOARD,
-    )
-
-
-@router.message(F.text == _BTN_SELFEMPLOYED)
-async def ask_selfemployed(message: Message, state: FSMContext):
-    await state.set_state(InnForm.waiting_inn)
-    await state.update_data(mode=MODE_SELFEMPLOYED)
-    logger.info("User %s → mode %s", message.from_user.id, MODE_SELFEMPLOYED)
-    await message.answer(
-        '🔍 Введи ИНН физлица (12 цифр) для проверки статуса самозанятого.',
-        reply_markup=NAV_KEYBOARD,
-    )
+    await state.update_data(mode=MODE_PERSON, person_candidates=[])
+    logger.info("User %s → mode %s", message.from_user.id, MODE_PERSON)
+    await message.answer('🧍 Физлицо\n\nВведите ФИО (2–4 слова).', reply_markup=NAV_KEYBOARD)
 
 
 @router.message(F.text == _BTN_HOME)
@@ -152,78 +170,89 @@ async def handle_inn_input(message: Message, state: FSMContext, aggregator, sess
     user_id = message.from_user.id
 
     # Allow mode switch from within the waiting state
-    if text in (_BTN_ORG, _BTN_IP, _BTN_INDIV, _BTN_UNIVERSAL, _BTN_EMAIL, _BTN_SELFEMPLOYED, _BTN_BACK, _BTN_HOME):
+    if text in (_BTN_ORG, _BTN_IP, _BTN_PERSON, _BTN_BACK, _BTN_HOME):
         await state.clear()
         await message.answer('Выберите режим проверки:', reply_markup=MAIN_KEYBOARD)
         return
 
     data = await state.get_data()
-    mode = data.get('mode', MODE_UNIVERSAL)
-
-    # Email mode: validate and search by email
-    if mode == MODE_EMAIL:
-        if not _RE_EMAIL.match(text):
-            await message.answer('Не похоже на email. Попробуйте ещё раз.')
-            return
-        logger.info("User %s checking email %s", user_id, text)
-        await message.answer('Ищу компанию по email…')
-        results = await aggregator.get_card_by_email(text)
-        for page in format_email_result(text, results):
-            await message.answer(page)
-        await message.answer('Выберите действие:', reply_markup=MAIN_KEYBOARD)
-        await state.clear()
+    mode = data.get('mode', MODE_LEGAL)
+    if not await _check_rate_limit(user_id, sessions):
+        await message.answer('Слишком часто. Подождите 1 секунду и повторите запрос.')
         return
 
-    # Self-employed mode: validate 12-digit INN and check NPD status
-    if mode == MODE_SELFEMPLOYED:
-        query = validate_inn(text)
-        if not query or len(query) != 12:
-            await message.answer('ИНН физлица должен содержать 12 цифр без пробелов.')
+    if mode == MODE_PERSON:
+        if not _is_valid_person_query(text):
+            await message.answer('Введите ФИО: 2–4 слова, без цифр.')
             return
-        logger.info("User %s selfemployed check %s", user_id, query)
-        await message.answer('Проверяю статус самозанятого…')
-        se_result = await aggregator.check_selfemployed(query)
-        for page in format_selfemployed(query, se_result):
-            await message.answer(page, reply_markup=MAIN_KEYBOARD)
-        await state.clear()
+        suggestions = await aggregator.dadata.suggest_party(text, count=10)
+        if not suggestions:
+            await message.answer('По ФИО ничего не найдено. Попробуйте уточнить запрос.')
+            return
+        await state.update_data(person_candidates=suggestions)
+        await message.answer('Выберите найденный вариант:', reply_markup=_build_person_keyboard(suggestions))
         return
 
     query = validate_inn(text)
 
     # Validate by mode
-    if mode == MODE_ORG:
+    if mode == MODE_LEGAL:
         if not query or len(query) not in (10, 13):
             await message.answer(
                 'Не похоже на ИНН/ОГРН.\n'
                 'ИНН — 10 цифр, ОГРН — 13 цифр. Без пробелов и букв.'
             )
             return
-    elif mode in (MODE_IP, MODE_INDIV):
-        if not query or len(query) != 12:
-            await message.answer('ИНН должен содержать 12 цифр без пробелов.')
-            return
-    else:
-        if not query or len(query) not in (10, 12):
-            await message.answer('ИНН должен содержать 10 или 12 цифр без пробелов.')
+    elif mode == MODE_INDIVIDUAL:
+        if not query or len(query) not in (12, 15):
+            await message.answer('ИНН ИП должен быть 12 цифр, ОГРНИП — 15 цифр.')
             return
 
     logger.info("User %s checking %s (mode=%s)", user_id, query, mode)
     await message.answer('Ищу по реестрам… 5–10 секунд.')
 
-    card_data = await aggregator.get_card(query)
+    card_data = await aggregator.get_card(query, entity_type=mode, count=10)
     if not card_data:
         await message.answer('По указанному ИНН данные не найдены.', reply_markup=MAIN_KEYBOARD)
         await state.clear()
         return
 
-    resolved_inn = card_data.get('inn', query)
-    await sessions.set_field(user_id, 'last_inn', resolved_inn)
+    await _send_card(message, mode, card_data, sessions, user_id)
 
-    text_out, keyboard = _pick_card_format(mode, query, card_data)
+    await state.clear()
 
-    pages = paginate(text_out)
-    for i, page in enumerate(pages):
-        kb = keyboard if i == len(pages) - 1 else None
-        await message.answer(page, reply_markup=kb)
 
+@router.callback_query(F.data.startswith('person_pick:'))
+async def pick_person_candidate(query: CallbackQuery, state: FSMContext, aggregator, sessions):
+    data = await state.get_data()
+    candidates = data.get('person_candidates') or []
+    try:
+        idx = int((query.data or '').split(':', 1)[1])
+    except (ValueError, IndexError):
+        await query.answer('Некорректный выбор', show_alert=True)
+        return
+    if idx < 0 or idx >= len(candidates):
+        await query.answer('Вариант устарел. Повторите поиск.', show_alert=True)
+        return
+
+    user_id = query.from_user.id
+    if not await _check_rate_limit(user_id, sessions):
+        await query.answer('Слишком часто. Подождите 1 секунду.', show_alert=True)
+        return
+
+    suggestion = candidates[idx]
+    pick_query = _extract_query_for_find_by_id(suggestion)
+    if not pick_query:
+        await query.answer('У выбранной записи нет ИНН/ОГРН', show_alert=True)
+        return
+
+    await query.answer()
+    await query.message.answer('Догружаю полную карточку...')
+    card_data = await aggregator.get_card(pick_query, count=10)
+    if not card_data:
+        await query.message.answer('Полная карточка не найдена.', reply_markup=MAIN_KEYBOARD)
+        await state.clear()
+        return
+
+    await _send_card(query.message, MODE_PERSON, card_data, sessions, user_id)
     await state.clear()

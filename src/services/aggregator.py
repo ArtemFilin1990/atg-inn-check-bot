@@ -18,9 +18,18 @@ class Aggregator:
         self.ref = ref_data
         self.nalog = nalog
 
-    async def get_card(self, query: str) -> Optional[Dict[str, Any]]:
+    async def get_card(
+        self,
+        query: str,
+        *,
+        entity_type: Optional[str] = None,
+        count: int = 10,
+        branch_type: Optional[str] = None,
+        kpp: Optional[str] = None,
+        status: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Fetch main card data from DaData. query = INN (10/12) or OGRN (13)."""
-        cache_key = f'card|{query}'
+        cache_key = f'card|{query}|{entity_type or ""}|{count}|{branch_type or ""}|{kpp or ""}|{",".join(status or [])}'
         cached = await self.cache.get(cache_key)
         if cached is not None:
             logger.debug("Cache hit for card %s", query)
@@ -29,7 +38,18 @@ class Aggregator:
         # Determine entity type by length
         is_individual = len(query) == 12
 
-        dadata_data = await self.dadata.find_party(query)
+        kwargs: Dict[str, Any] = {'count': count}
+        if entity_type:
+            kwargs['type'] = entity_type
+        if branch_type:
+            kwargs['branch_type'] = branch_type
+        if kpp:
+            kwargs['kpp'] = kpp
+        if status:
+            kwargs['status'] = status
+
+        suggestions = await self.dadata.find_by_id_party(query, **kwargs)
+        dadata_data = suggestions[0] if suggestions else None
 
         if not dadata_data:
             return None
@@ -43,6 +63,7 @@ class Aggregator:
         result = {
             'query': query,
             'dadata': dadata_data,
+            'suggestions': suggestions,
             'is_individual': is_individual,
             'okved_name': okved_name,
         }
@@ -53,6 +74,7 @@ class Aggregator:
         result['inn'] = resolved_inn
 
         await self.cache.set(cache_key, result, TTL_CARD)
+        await self.cache.set(f'card|{resolved_inn}', result, TTL_CARD)
         return result
 
     async def get_section(self, inn: str, section: str) -> Dict[str, Any]:

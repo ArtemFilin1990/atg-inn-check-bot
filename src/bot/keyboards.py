@@ -5,9 +5,8 @@ from aiogram.types import (
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text='🏢 1) Всё об организации'), KeyboardButton(text='🧑‍💼 2) Всё об ИП')],
-        [KeyboardButton(text='🪪 3) Физлицо'), KeyboardButton(text='🔎 Проверить ИНН')],
-        [KeyboardButton(text='📧 По email'), KeyboardButton(text='🔍 Самозанятый')],
+        [KeyboardButton(text='🏢 ООО'), KeyboardButton(text='👤 ИП')],
+        [KeyboardButton(text='🧍 Физлицо')],
     ],
     resize_keyboard=True,
 )

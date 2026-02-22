@@ -16,6 +16,9 @@ class TestValidateInn(unittest.TestCase):
     def test_valid_13_digit_ogrn(self):
         self.assertEqual(validate_inn('1027700132195'), '1027700132195')
 
+    def test_valid_15_digit_ogrnip(self):
+        self.assertEqual(validate_inn('304500116000157'), '304500116000157')
+
     def test_strips_non_digits(self):
         self.assertEqual(validate_inn('77 3620 7543'), '7736207543')
 

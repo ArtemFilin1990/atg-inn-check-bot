@@ -4,9 +4,11 @@ This repository contains a Telegram bot for checking Russian organizations or so
 
 ## Features
 
-- Reply keyboard with quick commands: 🏕️ Старт, 👋 Привет, 🔎 Проверить ИНН.
-- Validates that the input consists of 10 or 12 digits.
-- Requests DaData for full company information.
+- Reply keyboard with 3 modes: 🏢 ООО, 👤 ИП, 🧍 Физлицо.
+- For ООО uses `findById/party` with `type=LEGAL` and INN(10)/OGRN(13).
+- For ИП uses `findById/party` with `type=INDIVIDUAL` and INN(12)/OGRNIP(15).
+- For Физлицо uses `suggest/party` by full name, then loads full card via `findById/party`.
+- Validates inputs by selected mode and returns summary + full JSON in chunks.
 - Displays company name, INN/OGRN/KPP, status, address, CEO, and OKVED.
 - Shows simple risk flags based only on DaData fields (e.g. liquidation status).
 - Supports both polling and webhook modes (configurable via env vars).
@@ -26,10 +28,11 @@ This repository contains a Telegram bot for checking Russian organizations or so
 4. Copy `.env.example` to `.env` and fill in your tokens:
 
    - `BOT_TOKEN` – Telegram bot token.
-   - `DADATA_TOKEN` – DaData API token.
+   - `DADATA_TOKEN` (or `DADATA_API_KEY`) – DaData API token.
    - `DADATA_SECRET` – DaData secret (optional).
-   - `MODE` – `polling` or `webhook`.
-   - `WEBHOOK_URL` and `WEBHOOK_PATH` – for webhook mode.
+   - `WEBHOOK_BASE` (optional) – if set, bot runs webhook mode at `<WEBHOOK_BASE>/webhook`.
+   - `MODE` – `polling` or `webhook` (used when `WEBHOOK_BASE` is not set).
+   - `WEBHOOK_URL` and `WEBHOOK_PATH` – fallback webhook vars for compatibility.
    - `PORT` – port for webhook (default 3000).
 
 5. Run the bot in polling mode:
@@ -41,7 +44,7 @@ This repository contains a Telegram bot for checking Russian organizations or so
    Or in webhook mode:
 
    ```bash
-   MODE=webhook WEBHOOK_URL=<your public url> WEBHOOK_PATH=<secret path> python src/main.py
+   WEBHOOK_BASE=<your public url> PORT=3000 python src/main.py
    ```
 
 6. Deploy to Amvera by building the `Dockerfile` and setting environment variables accordingly.

@@ -23,7 +23,7 @@ def validate_inn(text: str) -> Optional[str]:
     raw = _RE_NON_DIGITS.sub('', text)
     if not raw.isdigit():
         return None
-    if len(raw) not in (10, 12, 13):
+    if len(raw) not in (10, 12, 13, 15):
         return None
     if _STRICT and len(raw) in (10, 12):
         if not _inn_checksum_valid(raw):
