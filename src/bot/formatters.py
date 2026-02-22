@@ -80,53 +80,38 @@ def paginate(text: str, limit: int = PAGE_LIMIT) -> list:
 
 
 def format_org_card(data: dict) -> str:
-    """Format organisation main card from aggregated data."""
-    checko = data.get('checko') or {}
+    """Format organisation main card from DaData data."""
     dadata = data.get('dadata') or {}
     dd = dadata.get('data') or {}
 
-    # Name: checko full_name preferred
-    name = (checko.get('full_name') or checko.get('short_name')
-            or (dd.get('name') or {}).get('short_with_opf')
+    name = ((dd.get('name') or {}).get('short_with_opf')
             or (dd.get('name') or {}).get('full_with_opf')
             or dadata.get('unrestricted_value') or '—')
-    inn = checko.get('inn') or dd.get('inn') or '—'
-    kpp = checko.get('kpp') or dd.get('kpp') or '—'
-    ogrn = checko.get('ogrn') or dd.get('ogrn') or '—'
+    inn = dd.get('inn') or '—'
+    kpp = dd.get('kpp') or '—'
+    ogrn = dd.get('ogrn') or '—'
 
     state = dd.get('state') or {}
-    status = checko.get('status') or state.get('name') or state.get('status') or '—'
+    status = state.get('name') or state.get('status') or '—'
+    reg_date = _fmt_date(state.get('registration_date'))
+    address = ((dd.get('address') or {}).get('unrestricted_value') or '—')
 
-    reg_date = _fmt_date(
-        checko.get('reg_date_ms') or state.get('registration_date')
-    )
-    if isinstance(checko.get('reg_date'), str):
-        reg_date = checko['reg_date']
-
-    address = (checko.get('address') or (dd.get('address') or {}).get('unrestricted_value') or '—')
-
-    mgmt = checko.get('management') or dd.get('management') or {}
+    mgmt = dd.get('management') or {}
     ceo = '—'
     if isinstance(mgmt, dict):
         ceo_name = mgmt.get('name') or mgmt.get('fio')
         ceo_post = mgmt.get('post') or mgmt.get('position') or ''
         if ceo_name:
             ceo = f'{ceo_post} {ceo_name}'.strip() if ceo_post else ceo_name
-    elif isinstance(mgmt, list) and mgmt:
-        m = mgmt[0]
-        ceo = m.get('fio') or m.get('name') or '—'
 
-    okved_code = checko.get('okved') or dd.get('okved') or '—'
-    okved_name = checko.get('okved_name') or '—'
+    okved_code = dd.get('okved') or '—'
+    okved_name = dd.get('okved_name') or '—'
     okved_str = f'{okved_code} — {okved_name}' if okved_name != '—' else okved_code
 
-    capital_val = checko.get('capital') or (dd.get('capital') or {}).get('value')
-    capital = _fmt_money(capital_val)
-
+    capital = _fmt_money((dd.get('capital') or {}).get('value'))
     finance = dd.get('finance') or {}
-    tax = checko.get('tax_system') or finance.get('tax_system') or '—'
+    tax = finance.get('tax_system') or '—'
 
-    # Risks
     status_upper = (state.get('status') or '').upper()
     if status_upper in ('LIQUIDATED', 'BANKRUPT'):
         risk_unreliable = '⛔ да'
@@ -154,24 +139,20 @@ def format_org_card(data: dict) -> str:
 
 
 def format_ip_card(data: dict) -> str:
-    checko = data.get('checko') or {}
     dadata = data.get('dadata') or {}
     dd = dadata.get('data') or {}
 
-    name = (checko.get('fio') or checko.get('full_name')
-            or dadata.get('value')
+    name = (dadata.get('value')
             or (dd.get('name') or {}).get('full') or '—')
-    inn = checko.get('inn') or dd.get('inn') or '—'
-    ogrn = checko.get('ogrn') or dd.get('ogrn') or '—'
+    inn = dd.get('inn') or '—'
+    ogrn = dd.get('ogrn') or '—'
 
     state = dd.get('state') or {}
-    status = checko.get('status') or state.get('name') or state.get('status') or '—'
+    status = state.get('name') or state.get('status') or '—'
     reg_date = _fmt_date(state.get('registration_date'))
-    if isinstance(checko.get('reg_date'), str):
-        reg_date = checko['reg_date']
 
-    address = (checko.get('address') or (dd.get('address') or {}).get('unrestricted_value') or '—')
-    okved = checko.get('okved') or dd.get('okved') or '—'
+    address = ((dd.get('address') or {}).get('unrestricted_value') or '—')
+    okved = dd.get('okved') or '—'
 
     status_upper = (state.get('status') or '').upper()
     risk = ''

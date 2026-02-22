@@ -26,7 +26,7 @@ This repository contains a Telegram bot for checking Russian organizations or so
 4. Copy `.env.example` to `.env` and fill in your tokens:
 
    - `BOT_TOKEN` – Telegram bot token.
-   - `DADATA_TOKEN` – DaData API token.
+   - `DADATA_API_KEY` (or `DADATA_TOKEN`) – DaData API token.
    - `DADATA_SECRET` – DaData secret (optional).
    - `MODE` – `polling` or `webhook`.
    - `WEBHOOK_URL` and `WEBHOOK_PATH` – for webhook mode.
@@ -35,13 +35,13 @@ This repository contains a Telegram bot for checking Russian organizations or so
 5. Run the bot in polling mode:
 
    ```bash
-   MODE=polling python -m inn_check_bot.main
+   MODE=polling PYTHONPATH=src python -m main
    ```
 
    Or in webhook mode:
 
    ```bash
-   MODE=webhook WEBHOOK_URL=<your public url> WEBHOOK_PATH=<secret path> python -m inn_check_bot.main
+   MODE=webhook WEBHOOK_URL=<your public url> WEBHOOK_PATH=<secret path> PYTHONPATH=src python -m main
    ```
 
 6. Deploy to Amvera by building the `Dockerfile` and setting environment variables accordingly.

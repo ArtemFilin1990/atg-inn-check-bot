@@ -9,7 +9,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from bot import handlers, callbacks
-from clients.checko import CheckoClient
 from clients.dadata import DadataClient
 from services.aggregator import Aggregator
 from services.cache import SQLiteCache
@@ -21,6 +20,21 @@ logging.basicConfig(
     level=os.environ.get('LOG_LEVEL', 'INFO'),
 )
 logger = logging.getLogger(__name__)
+
+
+def _required_env(mode: str) -> list[str]:
+    required = ['BOT_TOKEN']
+    if mode == 'webhook':
+        required.append('WEBHOOK_URL')
+    return required
+
+
+def _validate_env(mode: str) -> None:
+    missing = [name for name in _required_env(mode) if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+    if mode not in {'polling', 'webhook'}:
+        raise RuntimeError("MODE must be either 'polling' or 'webhook'")
 
 
 class ServiceMiddleware:
@@ -37,10 +51,10 @@ class ServiceMiddleware:
 
 
 async def main():
+    mode = os.environ.get('MODE', 'polling')
+    _validate_env(mode)
+
     token = os.environ['BOT_TOKEN']
-    checko_key = os.environ.get('CHECKO_API_KEY', '')
-    if not checko_key:
-        logger.warning("CHECKO_API_KEY is not set; Checko requests will fail")
     dadata_token = os.environ.get('DADATA_API_KEY') or os.environ.get('DADATA_TOKEN', '')
     dadata_secret = os.environ.get('DADATA_SECRET', '')
     if not dadata_token:
@@ -56,11 +70,9 @@ async def main():
     sessions = SessionStore()
     await sessions.init()
 
-    checko = CheckoClient(api_key=checko_key)
     dadata = DadataClient(token=dadata_token, secret=dadata_secret)
 
     aggregator = Aggregator(
-        checko=checko,
         dadata=dadata,
         cache=cache,
         ref_data=ref_data,
@@ -84,7 +96,6 @@ async def main():
     dp.include_router(handlers.router)
     dp.include_router(callbacks.router)
 
-    mode = os.environ.get('MODE', 'polling')
     try:
         if mode == 'webhook':
             from aiohttp import web
@@ -110,7 +121,6 @@ async def main():
             logger.info("Starting polling")
             await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
-        await checko.close()
         await dadata.close()
         await cache.close()
         await ref_data.close()
