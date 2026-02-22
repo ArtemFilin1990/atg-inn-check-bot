@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 import httpx
 from dadata import DadataAsync as _DadataAsync
@@ -36,8 +36,8 @@ class DadataClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
-    async def _find_by_id(self, query: str) -> List[Dict]:
-        return await self._client.find_by_id(name='party', query=query, branch_type='MAIN')
+    async def _find_by_id(self, query: str, **kwargs: Any) -> List[Dict]:
+        return await self._client.find_by_id(name='party', query=query, **kwargs)
 
     @retry(
         retry=retry_if_exception(_is_retryable),
@@ -75,6 +75,15 @@ class DadataClient:
     async def _find_affiliated_raw(self, inn: str) -> List[Dict]:
         return await self._client.find_affiliated(query=inn)
 
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(_RETRY_COUNT + 1),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    async def _suggest_party_raw(self, query: str, count: int = 10) -> List[Dict]:
+        return await self._client.suggest(name='party', query=query, count=count)
+
     async def find_affiliated(self, inn: str) -> List[Dict]:
         """Find affiliated companies by INN. Returns list of suggestions."""
         try:
@@ -89,11 +98,10 @@ class DadataClient:
             logger.exception("DaData find_affiliated error for %s: %s", inn, e)
             return []
 
-    async def find_party(self, query: str) -> Optional[Dict]:
-        """Find company or IP by INN or OGRN. Returns first suggestion or None."""
+    async def find_by_id_party(self, query: str, **kwargs: Any) -> List[Dict]:
+        """Find company/IP by INN/OGRN with all supported findById parameters."""
         try:
-            suggestions: List[Dict] = await self._find_by_id(query)
-            return suggestions[0] if suggestions else None
+            return await self._find_by_id(query, **kwargs)
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             if status == 403:
@@ -102,10 +110,29 @@ class DadataClient:
                 logger.warning("DaData rate limit hit (429) for query %s", query)
             else:
                 logger.error("DaData HTTP error %s for query %s", status, query)
-            return None
+            return []
         except httpx.RequestError as e:
             logger.error("DaData network error for query %s: %s", query, e)
-            return None
+            return []
         except Exception as e:
-            logger.exception("DaData find_party error for %s: %s", query, e)
-            return None
+            logger.exception("DaData find_by_id error for %s: %s", query, e)
+            return []
+
+    async def suggest_party(self, query: str, count: int = 10) -> List[Dict]:
+        """Suggest companies/IPs by free-text query (e.g. person full name)."""
+        try:
+            return await self._suggest_party_raw(query=query, count=count)
+        except httpx.HTTPStatusError as e:
+            logger.error("DaData suggest HTTP error %s for query %s", e.response.status_code, query)
+            return []
+        except httpx.RequestError as e:
+            logger.error("DaData suggest network error for query %s: %s", query, e)
+            return []
+        except Exception as e:
+            logger.exception("DaData suggest error for %s: %s", query, e)
+            return []
+
+    async def find_party(self, query: str) -> Optional[Dict]:
+        """Find company or IP by INN or OGRN. Returns first suggestion or None."""
+        suggestions = await self.find_by_id_party(query=query, branch_type='MAIN')
+        return suggestions[0] if suggestions else None

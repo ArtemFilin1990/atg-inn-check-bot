@@ -81,14 +81,15 @@ async def main():
     dp.include_router(handlers.router)
     dp.include_router(callbacks.router)
 
-    mode = os.environ.get('MODE', 'polling')
+    webhook_base = os.environ.get('WEBHOOK_BASE', '').rstrip('/')
+    mode = 'webhook' if webhook_base else os.environ.get('MODE', 'polling')
     try:
         if mode == 'webhook':
             from aiohttp import web
             from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-            webhook_url = os.environ['WEBHOOK_URL']
             webhook_path = os.environ.get('WEBHOOK_PATH', '/webhook')
-            port = int(os.environ.get('PORT', '80'))
+            webhook_url = webhook_base or os.environ['WEBHOOK_URL']
+            port = int(os.environ.get('PORT', '3000'))
             await bot.set_webhook(f'{webhook_url}{webhook_path}')
             app = web.Application()
             SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=webhook_path)
