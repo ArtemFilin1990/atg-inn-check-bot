@@ -9,7 +9,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from bot import handlers, callbacks
-from clients.checko import CheckoClient
 from clients.dadata import DadataClient
 from services.aggregator import Aggregator
 from services.cache import SQLiteCache
@@ -38,9 +37,6 @@ class ServiceMiddleware:
 
 async def main():
     token = os.environ['BOT_TOKEN']
-    checko_key = os.environ.get('CHECKO_API_KEY', '')
-    if not checko_key:
-        logger.warning("CHECKO_API_KEY is not set; Checko requests will fail")
     dadata_token = os.environ.get('DADATA_API_KEY') or os.environ.get('DADATA_TOKEN', '')
     dadata_secret = os.environ.get('DADATA_SECRET', '')
     if not dadata_token:
@@ -56,11 +52,9 @@ async def main():
     sessions = SessionStore()
     await sessions.init()
 
-    checko = CheckoClient(api_key=checko_key)
     dadata = DadataClient(token=dadata_token, secret=dadata_secret)
 
     aggregator = Aggregator(
-        checko=checko,
         dadata=dadata,
         cache=cache,
         ref_data=ref_data,
@@ -110,7 +104,6 @@ async def main():
             logger.info("Starting polling")
             await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
-        await checko.close()
         await dadata.close()
         await cache.close()
         await ref_data.close()

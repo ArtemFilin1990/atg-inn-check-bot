@@ -45,10 +45,18 @@ class TestFmtMoney(unittest.TestCase):
 class TestFormatOrgCard(unittest.TestCase):
     def _make_data(self, **overrides):
         base = {
-            'checko': {'inn': '7736207543', 'kpp': '773601001', 'ogrn': '1027700132195',
-                       'full_name': 'ООО Тест', 'status': 'Действующая',
-                       'address': 'г. Москва', 'okved': '62.01'},
-            'dadata': {},
+            'dadata': {
+                'data': {
+                    'inn': '7736207543',
+                    'kpp': '773601001',
+                    'ogrn': '1027700132195',
+                    'name': {'short_with_opf': 'ООО Тест'},
+                    'state': {'name': 'Действующая'},
+                    'address': {'unrestricted_value': 'г. Москва'},
+                    'okved': '62.01',
+                },
+            },
+            'okved_name': None,
             'is_individual': False,
         }
         base.update(overrides)
@@ -68,7 +76,7 @@ class TestFormatOrgCard(unittest.TestCase):
 
     def test_empty_data(self):
         # Should not raise
-        text = format_org_card({'checko': {}, 'dadata': {}, 'is_individual': False})
+        text = format_org_card({'dadata': {}, 'is_individual': False})
         self.assertIsInstance(text, str)
 
 
