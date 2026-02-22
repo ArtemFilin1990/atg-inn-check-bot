@@ -11,8 +11,8 @@ PAGE_LIMIT = 3800  # chars per Telegram message window
 
 def _e(v) -> str:
     """HTML-escape a dynamic value for safe use in HTML parse-mode messages."""
-    if v is None or v == '—':
-        return str(v) if v is not None else '—'
+    if v is None:
+        return '—'
     return html.escape(str(v))
 
 
@@ -266,7 +266,7 @@ def format_checks(inn: str, data: dict) -> list:
             kind = item.get('type') or item.get('kind') or '—'
             period = item.get('period') or item.get('date') or '—'
             result = item.get('result') or '—'
-            lines.append(f'{i}) {kind} — {period} — результат: {result}')
+            lines.append(f'{i}) {_e(kind)} — {period} — результат: {_e(result)}')
     return paginate('\n'.join(lines))
 
 
@@ -280,10 +280,10 @@ def format_bankruptcy(inn: str, data: dict) -> list:
     date = data.get('date') or '—'
     text = (
         f'🏦 Банкротство по {inn}\n\n'
-        f'Статус: {status}\n'
-        f'Дело: {case_num}\n'
-        f'Суд: {court}\n'
-        f'Процедура: {stage} (с {date})'
+        f'Статус: {_e(status)}\n'
+        f'Дело: {_e(case_num)}\n'
+        f'Суд: {_e(court)}\n'
+        f'Процедура: {_e(stage)} (с {date})'
     )
     return [text]
 
@@ -306,7 +306,7 @@ def format_tenders(inn: str, data: dict) -> list:
             date = item.get('date') or '—'
             amount = _fmt_money(item.get('amount')) if item.get('amount') else '—'
             customer = item.get('customer') or '—'
-            lines.append(f'{i}) {num} — {date} — {amount} — {customer}')
+            lines.append(f'{i}) {_e(num)} — {date} — {amount} — {_e(customer)}')
     return paginate('\n'.join(lines))
 
 
@@ -338,7 +338,7 @@ def format_connections(inn: str, data: dict) -> list:
         for o in owners[:5]:
             name = o.get('name') or o.get('fio') or '—'
             share = o.get('share') or o.get('percent') or '—'
-            lines.append(f'• {name} — {share}%')
+            lines.append(f'• {_e(name)} — {share}%')
     if related:
         lines.append('')
         lines.append('Связанные компании:')
@@ -346,7 +346,7 @@ def format_connections(inn: str, data: dict) -> list:
             rname = r.get('name') or '—'
             rinn = r.get('inn') or '—'
             role = r.get('role') or '—'
-            lines.append(f'{i}) {rname} — {rinn} — роль: {role}')
+            lines.append(f'{i}) {_e(rname)} — {rinn} — роль: {_e(role)}')
     if not owners and not related:
         lines.append('Данные не найдены.')
     return paginate('\n'.join(lines))
