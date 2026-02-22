@@ -6,7 +6,7 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = os.environ.get('REF_DB_PATH', '/data/db/reference_data.sqlite')
+_DB_PATH = os.environ.get('REF_DB_PATH', 'db/reference_data.sqlite')
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS okved (
