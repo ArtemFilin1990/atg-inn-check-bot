@@ -1,11 +1,15 @@
 import os
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Optional, Dict
 import requests
 from cachetools import TTLCache
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ConversationHandler, filters, ContextTypes,
+)
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -17,13 +21,31 @@ cache = TTLCache(maxsize=1000, ttl=int(os.environ.get('CACHE_TTL', '600')))
 
 feedback_stats: Dict[str, int] = {'helpful': 0, 'not_helpful': 0}
 
-FEEDBACK_WAITING: Dict[int, bool] = {}
+# Conversation state
+AWAITING_INN = 0
+
+# User-data key that stores which scenario is active
+MODE_KEY = 'inn_mode'
+MODE_ORG = 'org'
+MODE_IP = 'ip'
+MODE_INDIV = 'indiv'
+MODE_UNIVERSAL = 'universal'
+
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    [['🏢 Всё об организации', '👤 Всё об ИП'], ['🧑 Физлицо', '🔎 Проверить ИНН']],
+    resize_keyboard=True,
+)
+
+# Button labels used to detect mode switches inside the conversation
+_MODE_BUTTONS = {'🏢 Всё об организации', '👤 Всё об ИП', '🧑 Физлицо', '🔎 Проверить ИНН'}
+
 
 def validate_inn(text: str) -> Optional[str]:
     inn = re.sub(r'\D', '', text)
     if inn.isdigit() and len(inn) in (10, 12):
         return inn
     return None
+
 
 def fetch_dadata(inn: str) -> Optional[Dict]:
     if inn in cache:
@@ -53,26 +75,53 @@ def fetch_dadata(inn: str) -> Optional[Dict]:
         logger.exception("Error fetching data from DaData: %s", e)
     return None
 
-def format_info(info: Dict) -> str:
-    data = info.get('data', {})
-    name = data.get('name', {}).get('short_with_opf') or data.get('name', {}).get('full_with_opf')
-    ogrn = data.get('ogrn')
-    inn = data.get('inn')
-    kpp = data.get('kpp')
-    address = data.get('address', {}).get('unrestricted_value')
-    state = data.get('state', {})
+
+def _format_date(ts_ms: Optional[int]) -> str:
+    if ts_ms is None:
+        return 'неизвестно'
+    try:
+        return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime('%d.%m.%Y')
+    except Exception:
+        return 'неизвестно'
+
+
+def format_org_info(info: Dict) -> str:
+    data = info.get('data', {}) or {}
+    name = (
+        data.get('name', {}).get('full_with_opf')
+        or data.get('name', {}).get('short_with_opf')
+        or '—'
+    )
+    ogrn = data.get('ogrn') or '—'
+    inn = data.get('inn') or '—'
+    kpp = data.get('kpp') or '—'
+    address = (data.get('address') or {}).get('unrestricted_value') or '—'
+    state = data.get('state') or {}
     status = state.get('status')
-    status_name = state.get('name')
-    message = f"Название: {name}\nИНН/КПП: {inn}/{kpp}\nОГРН: {ogrn}\nАдрес: {address}\nСтатус: {status_name} ({status})"
+    status_name = state.get('name') or status or '—'
+    reg_date = _format_date(state.get('registration_date'))
+
+    lines = [
+        '🏢 Организация',
+        f'Полное наименование: {name}',
+        f'ИНН/КПП: {inn}/{kpp}',
+        f'ОГРН: {ogrn}',
+        f'Статус: {status_name}',
+        f'Дата регистрации: {reg_date}',
+        f'Адрес: {address}',
+    ]
+
     management = data.get('management')
     if management:
         ceo_name = management.get('name')
         ceo_post = management.get('post')
         if ceo_name:
-            message += f"\nРуководитель: {f'{ceo_post} ' if ceo_post else ''}{ceo_name}"
+            lines.append(f'Руководитель: {f"{ceo_post} " if ceo_post else ""}{ceo_name}')
+
     okved = data.get('okved')
     if okved:
-        message += f"\nОКВЭД: {okved}"
+        lines.append(f'ОКВЭД: {okved}')
+
     risk_flags = []
     if status == 'LIQUIDATED':
         risk_flags.append('⛔ Организация ликвидирована')
@@ -82,58 +131,97 @@ def format_info(info: Dict) -> str:
         risk_flags.append('⚠️ Организация в процессе ликвидации')
     elif status == 'REORGANIZING':
         risk_flags.append('⚠️ Организация в процессе реорганизации')
-    if risk_flags:
-        message += '\n\nРиски:\n' + '\n'.join(risk_flags)
-    return message
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = [['🏕️ Старт', '👋 Привет'], ['🔎 Проверить ИНН']]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(
-        'Добро пожаловать! Я могу проверить ИНН организации или ИП.\n'
-        'Нажмите кнопку или отправьте ИНН (10 или 12 цифр).',
-        reply_markup=reply_markup
+    if risk_flags:
+        lines.append('\nПризнаки риска:\n' + '\n'.join(risk_flags))
+
+    return '\n'.join(lines)
+
+
+def format_ip_info(info: Dict) -> str:
+    data = info.get('data', {}) or {}
+    # Name precedence: top-level `value` (full display name) > data.name.full > fallback
+    name = info.get('value') or (data.get('name') or {}).get('full') or '—'
+    ogrn = data.get('ogrn') or '—'
+    inn = data.get('inn') or '—'
+    state = data.get('state') or {}
+    status = state.get('status')
+    status_name = state.get('name') or status or '—'
+    reg_date = _format_date(state.get('registration_date'))
+    address = (data.get('address') or {}).get('unrestricted_value') or '—'
+    okved = data.get('okved') or '—'
+
+    lines = [
+        '👤 ИП',
+        f'ФИО: {name}',
+        f'ИНН: {inn}',
+        f'ОГРНИП: {ogrn}',
+        f'Статус: {status_name}',
+        f'Дата регистрации: {reg_date}',
+        f'Регион: {address}',
+        f'ОКВЭД: {okved}',
+    ]
+
+    risk_flags = []
+    if status == 'LIQUIDATED':
+        risk_flags.append('⛔ ИП прекратил деятельность')
+    elif status == 'LIQUIDATING':
+        risk_flags.append('⚠️ ИП в процессе ликвидации')
+
+    if risk_flags:
+        lines.append('\nПризнаки риска:\n' + '\n'.join(risk_flags))
+
+    return '\n'.join(lines)
+
+
+def format_individual_info(info: Dict) -> str:
+    """Return only legally available data for an individual."""
+    data = info.get('data', {}) or {}
+    inn = data.get('inn') or '—'
+    state = data.get('state') or {}
+    status_name = state.get('name') or state.get('status') or '—'
+    address = (data.get('address') or {}).get('unrestricted_value') or '—'
+
+    lines = [
+        '🧑 Физлицо',
+        f'ИНН: {inn}',
+        f'Статус в налоговой: {status_name}',
+        f'Регион регистрации: {address}',
+    ]
+    return '\n'.join(lines)
+
+
+# Keep for backwards compatibility
+def format_info(info: Dict) -> str:
+    return format_org_info(info)
+
+
+def _after_result_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton('🔁 Проверить другой ИНН', callback_data='check_another')]]
     )
 
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text.strip()
-    if text == '🏕️ Старт':
-        await start(update, context)
-        return
-    if text == '👋 Привет':
-        await update.message.reply_text('Привет! Отправьте ИНН для проверки.')
-        return
-    if text == '🔎 Проверить ИНН':
-        await update.message.reply_text('Пожалуйста, отправьте ИНН (10 или 12 цифр).')
-        return
-    user_id = update.effective_user.id
-    if FEEDBACK_WAITING.pop(user_id, False):
-        logger.info("User feedback from %s: %s", user_id, text)
-        await update.message.reply_text('Спасибо за ваш отзыв! Мы постараемся улучшить бота.')
-        return
-    inn = validate_inn(text)
-    if not inn:
-        await update.message.reply_text('Введите корректный ИНН (10 или 12 цифр).')
-        return
-    await update.message.reply_text('Ищу информацию, пожалуйста, подождите...')
-    info = fetch_dadata(inn)
-    if info:
-        message = format_info(info)
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton('👍 Полезно', callback_data=f'feedback:helpful:{inn}'),
-                InlineKeyboardButton('👎 Не полезно', callback_data=f'feedback:not_helpful:{inn}'),
-            ]
-        ])
-        await update.message.reply_text(message, reply_markup=keyboard)
-    else:
-        await update.message.reply_text('Не удалось получить информацию. Попробуйте позже.')
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        'Добро пожаловать! Я могу проверить ИНН организации, ИП или физлица.\n'
+        'Выберите режим проверки:',
+        reply_markup=MAIN_KEYBOARD,
+    )
+    return ConversationHandler.END
+
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        'Отправьте ИНН (10 или 12 цифр), чтобы получить сведения о компании или ИП.\n'
-        'Команда /feedback — отправить предложение по улучшению бота.'
+        'Выберите кнопку для проверки ИНН:\n'
+        '🏢 Всё об организации — ИНН из 10 цифр\n'
+        '👤 Всё об ИП — ИНН из 12 цифр\n'
+        '🧑 Физлицо — ИНН из 12 цифр\n'
+        '🔎 Проверить ИНН — универсальный режим (10 или 12 цифр)\n\n'
+        'Команда /feedback — отправить предложение по улучшению бота.',
+        reply_markup=MAIN_KEYBOARD,
     )
+
 
 async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = ' '.join(context.args) if context.args else ''
@@ -141,8 +229,107 @@ async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logger.info("User feedback from %s: %s", update.effective_user.id, text)
         await update.message.reply_text('Спасибо за ваш отзыв! Мы постараемся улучшить бота.')
     else:
-        FEEDBACK_WAITING[update.effective_user.id] = True
-        await update.message.reply_text('Пожалуйста, напишите ваше предложение или замечание по работе бота.')
+        await update.message.reply_text(
+            'Пожалуйста, напишите ваше предложение или замечание после команды:\n'
+            '/feedback <ваш текст>'
+        )
+
+
+# ── entry-point handlers (set mode and ask for INN) ──────────────────────────
+
+async def ask_org_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data[MODE_KEY] = MODE_ORG
+    await update.message.reply_text('Введите ИНН организации (10 цифр).')
+    return AWAITING_INN
+
+
+async def ask_ip_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data[MODE_KEY] = MODE_IP
+    await update.message.reply_text('Введите ИНН ИП (12 цифр).')
+    return AWAITING_INN
+
+
+async def ask_indiv_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data[MODE_KEY] = MODE_INDIV
+    await update.message.reply_text('Введите ИНН физлица (12 цифр).')
+    return AWAITING_INN
+
+
+async def ask_universal_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data[MODE_KEY] = MODE_UNIVERSAL
+    await update.message.reply_text('Введите ИНН (10 или 12 цифр).')
+    return AWAITING_INN
+
+
+# ── state handler ─────────────────────────────────────────────────────────────
+
+async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the INN text received while in AWAITING_INN state."""
+    text = update.message.text.strip()
+
+    # Allow switching mode by pressing a different keyboard button
+    if text == '🏢 Всё об организации':
+        return await ask_org_inn(update, context)
+    if text == '👤 Всё об ИП':
+        return await ask_ip_inn(update, context)
+    if text == '🧑 Физлицо':
+        return await ask_indiv_inn(update, context)
+    if text == '🔎 Проверить ИНН':
+        return await ask_universal_inn(update, context)
+
+    mode = context.user_data.get(MODE_KEY, MODE_UNIVERSAL)
+    inn_raw = re.sub(r'\D', '', text)
+
+    # Validate length based on mode
+    if mode == MODE_ORG:
+        if not inn_raw.isdigit() or len(inn_raw) != 10:
+            await update.message.reply_text('ИНН должен содержать 10 цифр без пробелов.')
+            return AWAITING_INN
+    elif mode in (MODE_IP, MODE_INDIV):
+        if not inn_raw.isdigit() or len(inn_raw) != 12:
+            await update.message.reply_text('ИНН должен содержать 12 цифр без пробелов.')
+            return AWAITING_INN
+    else:  # universal
+        if not inn_raw.isdigit() or len(inn_raw) not in (10, 12):
+            await update.message.reply_text('ИНН должен содержать 10 или 12 цифр без пробелов.')
+            return AWAITING_INN
+
+    user_id = update.effective_user.id
+    logger.info("User %s checking INN %s (mode=%s)", user_id, inn_raw, mode)
+    await update.message.reply_text('Ищу информацию, пожалуйста, подождите...')
+
+    info = fetch_dadata(inn_raw)
+    if not info:
+        await update.message.reply_text(
+            'По указанному ИНН данные не найдены.',
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return ConversationHandler.END
+
+    if mode == MODE_ORG:
+        message = format_org_info(info)
+    elif mode == MODE_IP:
+        message = format_ip_info(info)
+    elif mode == MODE_INDIV:
+        message = format_individual_info(info)
+    else:  # universal — choose formatter by entity type reported by DaData
+        entity_type = (info.get('data') or {}).get('type')
+        if entity_type == 'LEGAL' or len(inn_raw) == 10:
+            message = format_org_info(info)
+        else:
+            message = format_ip_info(info)
+
+    await update.message.reply_text(message, reply_markup=_after_result_keyboard())
+    return ConversationHandler.END
+
+
+# ── callback query handlers ───────────────────────────────────────────────────
+
+async def check_another_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text('Выберите режим проверки:', reply_markup=MAIN_KEYBOARD)
+
 
 async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -167,21 +354,42 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.edit_message_reply_markup(reply_markup=None)
     await query.message.reply_text(reply)
 
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
 
 def build_application() -> Application:
     token = os.environ.get('BOT_TOKEN')
     if not token:
         raise RuntimeError('BOT_TOKEN is not set')
     app = Application.builder().token(token).build()
+
+    conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex(r'^🏢 Всё об организации$'), ask_org_inn),
+            MessageHandler(filters.Regex(r'^👤 Всё об ИП$'), ask_ip_inn),
+            MessageHandler(filters.Regex(r'^🧑 Физлицо$'), ask_indiv_inn),
+            MessageHandler(filters.Regex(r'^🔎 Проверить ИНН$'), ask_universal_inn),
+        ],
+        states={
+            AWAITING_INN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_inn)],
+        },
+        fallbacks=[
+            CommandHandler('start', start),
+            CommandHandler('help', help_cmd),
+        ],
+    )
+
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('help', help_cmd))
     app.add_handler(CommandHandler('feedback', feedback_cmd))
+    app.add_handler(CallbackQueryHandler(check_another_callback, pattern=r'^check_another$'))
     app.add_handler(CallbackQueryHandler(feedback_callback, pattern=r'^feedback:'))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.add_handler(conv_handler)
     app.add_error_handler(error_handler)
     return app
+
 
 def run() -> None:
     application = build_application()
