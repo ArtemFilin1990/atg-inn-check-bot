@@ -9,7 +9,7 @@ import aiosqlite
 logger = logging.getLogger(__name__)
 
 _DB_PATH = os.environ.get('SESSION_DB_PATH',
-                           os.path.join(os.environ.get('DB_DIR', '/data/db'), 'sessions.sqlite'))
+                           os.path.join(os.environ.get('DB_DIR', 'db'), 'sessions.sqlite'))
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (

@@ -25,3 +25,7 @@ dist/
 # Environment files
 .env
 .env.*
+
+# SQLite databases
+*.sqlite
+*.db

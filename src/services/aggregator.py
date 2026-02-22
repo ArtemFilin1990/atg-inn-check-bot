@@ -10,16 +10,15 @@ TTL_FINANCES = 7 * 24 * 3600  # finances: 7 days
 
 
 class Aggregator:
-    """Merge Checko (primary truth) + DaData (enrichment)."""
+    """DaData-backed aggregator."""
 
-    def __init__(self, checko, dadata, cache, ref_data):
-        self.checko = checko
+    def __init__(self, dadata, cache, ref_data):
         self.dadata = dadata
         self.cache = cache
         self.ref = ref_data
 
     async def get_card(self, query: str) -> Optional[Dict[str, Any]]:
-        """Fetch and merge main card data. query = INN (10/12) or OGRN (13)."""
+        """Fetch main card data from DaData. query = INN (10/12) or OGRN (13)."""
         cache_key = f'card|{query}'
         cached = await self.cache.get(cache_key)
         if cached is not None:
@@ -29,39 +28,25 @@ class Aggregator:
         # Determine entity type by length
         is_individual = len(query) == 12
 
-        if is_individual:
-            checko_data = await self.checko.get_entrepreneur(query)
-        else:
-            checko_data = await self.checko.get_company(query)
-
         dadata_data = await self.dadata.find_party(query)
 
-        if not checko_data and not dadata_data:
+        if not dadata_data:
             return None
 
         # Enrich OKVED name from reference data
-        okved_code = None
-        if checko_data:
-            okved_code = checko_data.get('okved')
-        if not okved_code and dadata_data:
-            okved_code = (dadata_data.get('data') or {}).get('okved')
+        okved_code = (dadata_data.get('data') or {}).get('okved')
+        okved_name = None
         if okved_code:
             okved_name = await self.ref.get_okved_name(okved_code)
-            if okved_name:
-                if checko_data is None:
-                    checko_data = {}
-                checko_data['okved_name'] = okved_name
 
         result = {
             'query': query,
-            'checko': checko_data or {},
-            'dadata': dadata_data or {},
+            'dadata': dadata_data,
             'is_individual': is_individual,
+            'okved_name': okved_name,
         }
-        # Resolved INN from response (for sub-query callbacks)
         resolved_inn = (
-            (checko_data or {}).get('inn')
-            or ((dadata_data or {}).get('data') or {}).get('inn')
+            ((dadata_data.get('data') or {}).get('inn'))
             or query
         )
         result['inn'] = resolved_inn
@@ -70,7 +55,7 @@ class Aggregator:
         return result
 
     async def get_section(self, inn: str, section: str) -> Dict[str, Any]:
-        """Fetch a lazy section (courts, debts, etc.)."""
+        """Fetch a lazy section."""
         cache_key = f'section|{section}|{inn}'
         cached = await self.cache.get(cache_key)
         if cached is not None:
@@ -79,29 +64,7 @@ class Aggregator:
         data: Dict[str, Any] = {}
         ttl = TTL_SECTION
 
-        if section == 'courts':
-            raw = await self.checko.get_arbitrage(inn)
-            data = _parse_courts(raw)
-        elif section == 'debts':
-            raw = await self.checko.get_fssp(inn)
-            data = _parse_debts(raw)
-        elif section == 'checks':
-            raw = await self.checko.get_inspections(inn)
-            data = _parse_checks(raw)
-        elif section == 'bankruptcy':
-            raw = await self.checko.get_company(inn)
-            data = _parse_bankruptcy(raw)
-        elif section == 'tenders':
-            raw = await self.checko.get_contracts(inn)
-            data = _parse_tenders(raw)
-        elif section == 'finance':
-            raw = await self.checko.get_finances(inn)
-            data = _parse_finance(raw)
-            ttl = TTL_FINANCES
-        elif section == 'connections':
-            raw = await self.checko.get_company(inn)
-            data = _parse_connections(raw)
-        elif section == 'risks':
+        if section == 'risks':
             card = await self.cache.get(f'card|{inn}')
             if card is None:
                 card = await self.get_card(inn)
