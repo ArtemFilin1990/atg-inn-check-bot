@@ -1,4 +1,5 @@
 import logging
+import re
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -6,10 +7,12 @@ from aiogram.types import Message
 
 from bot.states import InnForm
 from bot.keyboards import MAIN_KEYBOARD, NAV_KEYBOARD, ORG_RESULT_KEYBOARD, SIMPLE_RESULT_KEYBOARD
-from bot.formatters import validate_inn, format_org_card, format_ip_card, format_individual_card, paginate
+from bot.formatters import validate_inn, format_org_card, format_ip_card, format_individual_card, format_email_result, format_selfemployed, paginate
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+_RE_EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 def _pick_card_format(mode: str, query: str, card_data: dict):
     """Return (formatted_text, keyboard) based on mode and entity type."""
@@ -30,6 +33,8 @@ MODE_ORG = 'org'
 MODE_IP = 'ip'
 MODE_INDIV = 'indiv'
 MODE_UNIVERSAL = 'universal'
+MODE_EMAIL = 'email'
+MODE_SELFEMPLOYED = 'selfemployed'
 
 _BTN_ORG = '🏢 1) Всё об организации'
 _BTN_IP = '🧑‍💼 2) Всё об ИП'
@@ -37,6 +42,8 @@ _BTN_INDIV = '🪪 3) Физлицо'
 _BTN_UNIVERSAL = '🔎 Проверить ИНН'
 _BTN_BACK = '◀️ Назад'
 _BTN_HOME = '🏠 Домой'
+_BTN_EMAIL = '📧 По email'
+_BTN_SELFEMPLOYED = '🔍 Самозанятый'
 
 
 @router.message(CommandStart())
@@ -110,6 +117,28 @@ async def ask_universal(message: Message, state: FSMContext):
     await message.answer('🔎 Введи ИНН (10 или 12 цифр).', reply_markup=NAV_KEYBOARD)
 
 
+@router.message(F.text == _BTN_EMAIL)
+async def ask_email(message: Message, state: FSMContext):
+    await state.set_state(InnForm.waiting_inn)
+    await state.update_data(mode=MODE_EMAIL)
+    logger.info("User %s → mode %s", message.from_user.id, MODE_EMAIL)
+    await message.answer(
+        '📧 Введи email для поиска компании.',
+        reply_markup=NAV_KEYBOARD,
+    )
+
+
+@router.message(F.text == _BTN_SELFEMPLOYED)
+async def ask_selfemployed(message: Message, state: FSMContext):
+    await state.set_state(InnForm.waiting_inn)
+    await state.update_data(mode=MODE_SELFEMPLOYED)
+    logger.info("User %s → mode %s", message.from_user.id, MODE_SELFEMPLOYED)
+    await message.answer(
+        '🔍 Введи ИНН физлица (12 цифр) для проверки статуса самозанятого.',
+        reply_markup=NAV_KEYBOARD,
+    )
+
+
 @router.message(F.text == _BTN_HOME)
 @router.message(F.text == _BTN_BACK)
 async def nav_home(message: Message, state: FSMContext):
@@ -123,13 +152,41 @@ async def handle_inn_input(message: Message, state: FSMContext, aggregator, sess
     user_id = message.from_user.id
 
     # Allow mode switch from within the waiting state
-    if text in (_BTN_ORG, _BTN_IP, _BTN_INDIV, _BTN_UNIVERSAL, _BTN_BACK, _BTN_HOME):
+    if text in (_BTN_ORG, _BTN_IP, _BTN_INDIV, _BTN_UNIVERSAL, _BTN_EMAIL, _BTN_SELFEMPLOYED, _BTN_BACK, _BTN_HOME):
         await state.clear()
         await message.answer('Выберите режим проверки:', reply_markup=MAIN_KEYBOARD)
         return
 
     data = await state.get_data()
     mode = data.get('mode', MODE_UNIVERSAL)
+
+    # Email mode: validate and search by email
+    if mode == MODE_EMAIL:
+        if not _RE_EMAIL.match(text):
+            await message.answer('Не похоже на email. Попробуйте ещё раз.')
+            return
+        logger.info("User %s checking email %s", user_id, text)
+        await message.answer('Ищу компанию по email…')
+        results = await aggregator.get_card_by_email(text)
+        for page in format_email_result(text, results):
+            await message.answer(page)
+        await message.answer('Выберите действие:', reply_markup=MAIN_KEYBOARD)
+        await state.clear()
+        return
+
+    # Self-employed mode: validate 12-digit INN and check NPD status
+    if mode == MODE_SELFEMPLOYED:
+        query = validate_inn(text)
+        if not query or len(query) != 12:
+            await message.answer('ИНН физлица должен содержать 12 цифр без пробелов.')
+            return
+        logger.info("User %s selfemployed check %s", user_id, query)
+        await message.answer('Проверяю статус самозанятого…')
+        se_result = await aggregator.check_selfemployed(query)
+        for page in format_selfemployed(query, se_result):
+            await message.answer(page, reply_markup=MAIN_KEYBOARD)
+        await state.clear()
+        return
 
     query = validate_inn(text)
 

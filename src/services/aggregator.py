@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -12,10 +12,11 @@ TTL_FINANCES = 7 * 24 * 3600  # finances: 7 days
 class Aggregator:
     """DaData-backed aggregator."""
 
-    def __init__(self, dadata, cache, ref_data):
+    def __init__(self, dadata, cache, ref_data, nalog=None):
         self.dadata = dadata
         self.cache = cache
         self.ref = ref_data
+        self.nalog = nalog
 
     async def get_card(self, query: str) -> Optional[Dict[str, Any]]:
         """Fetch main card data from DaData. query = INN (10/12) or OGRN (13)."""
@@ -72,6 +73,51 @@ class Aggregator:
 
         await self.cache.set(cache_key, data, ttl)
         return data
+
+    async def get_affiliates(self, inn: str) -> List[Dict]:
+        """Fetch affiliated companies via DaData. Cached for TTL_SECTION."""
+        cache_key = f'affiliates|{inn}'
+        cached = await self.cache.get(cache_key)
+        if cached is not None:
+            logger.debug("Cache hit for affiliates %s", inn)
+            return cached
+        affiliates = await self.dadata.find_affiliated(inn)
+        await self.cache.set(cache_key, affiliates, TTL_SECTION)
+        return affiliates
+
+    async def get_card_by_email(self, email: str) -> List[Dict]:
+        """Find companies by email. Returns list of enriched card dicts."""
+        suggestions = await self.dadata.find_by_email(email)
+        results = []
+        for suggestion in suggestions[:5]:
+            dd = suggestion.get('data') or {}
+            okved_code = dd.get('okved')
+            okved_name = None
+            if okved_code:
+                okved_name = await self.ref.get_okved_name(okved_code)
+            is_individual = dd.get('type') == 'INDIVIDUAL'
+            results.append({
+                'query': email,
+                'dadata': suggestion,
+                'is_individual': is_individual,
+                'okved_name': okved_name,
+                'inn': dd.get('inn') or '',
+            })
+        return results
+
+    async def check_selfemployed(self, inn: str) -> Dict:
+        """Check self-employed status for a 12-digit INN. Cached for TTL_SECTION."""
+        if not self.nalog:
+            return {}
+        cache_key = f'selfemployed|{inn}'
+        cached = await self.cache.get(cache_key)
+        if cached is not None:
+            logger.debug("Cache hit for selfemployed %s", inn)
+            return cached
+        result = await self.nalog.check_selfemployed(inn)
+        if result:
+            await self.cache.set(cache_key, result, TTL_SECTION)
+        return result
 
 
 # ── section parsers ───────────────────────────────────────────────────────────

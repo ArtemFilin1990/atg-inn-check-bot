@@ -7,6 +7,8 @@ from typing import Optional
 _RE_NON_DIGITS = re.compile(r'\D')
 _STRICT = os.environ.get('STRICT_INN_CHECK', '').lower() == 'true'
 PAGE_LIMIT = 3800  # chars per Telegram message window
+MAX_EMAIL_RESULTS = 5
+MAX_AFFILIATES_DISPLAY = 10
 
 
 def _e(v) -> str:
@@ -343,6 +345,61 @@ def format_connections(inn: str, data: dict) -> list:
     if not owners and not related:
         lines.append('Данные не найдены.')
     return paginate('\n'.join(lines))
+
+
+def format_email_result(email: str, results: list) -> list:
+    """Format company search results by email."""
+    if not results:
+        return [f'📧 По email {_e(email)}: компании не найдены.']
+    lines = [f'📧 Поиск по email: {_e(email)}', '']
+    for i, r in enumerate(results[:MAX_EMAIL_RESULTS], 1):
+        dd = (r.get('dadata') or {}).get('data') or {}
+        name = (
+            (dd.get('name') or {}).get('short_with_opf')
+            or (r.get('dadata') or {}).get('value') or '—'
+        )
+        inn = dd.get('inn') or '—'
+        address = (dd.get('address') or {}).get('unrestricted_value') or '—'
+        lines.append(f'{i}) {_e(name)}\n   ИНН: {inn}\n   {_e(address)}')
+    return paginate('\n'.join(lines))
+
+
+def format_affiliates(inn: str, affiliates: list) -> list:
+    """Format affiliated companies list."""
+    if not affiliates:
+        return [f'📎 Аффилированные по {inn}: не найдено.']
+    lines = [f'📎 Аффилированные компании ({inn}):', '']
+    for i, a in enumerate(affiliates[:MAX_AFFILIATES_DISPLAY], 1):
+        dd = a.get('data') or {}
+        name = (
+            (dd.get('name') or {}).get('short_with_opf')
+            or a.get('value') or '—'
+        )
+        a_inn = dd.get('inn') or '—'
+        a_type = dd.get('type') or ''
+        type_label = ' (ЮЛ)' if a_type == 'LEGAL' else ' (ИП)' if a_type == 'INDIVIDUAL' else ''
+        lines.append(f'{i}) {_e(name)}{type_label}\n   ИНН: {a_inn}')
+    return paginate('\n'.join(lines))
+
+
+def format_selfemployed(inn: str, result: dict) -> list:
+    """Format self-employed (самозанятый) check result."""
+    if not result:
+        return [f'🔍 Самозанятый {inn}: данные недоступны.']
+    status = result.get('status')
+    if status is True:
+        text = (
+            f'✅ {inn} — самозанятый\n\n'
+            f'Является плательщиком налога на профессиональный доход (НПД).'
+        )
+    elif status is False:
+        text = (
+            f'❌ {inn} — не самозанятый\n\n'
+            f'Не является плательщиком НПД.'
+        )
+    else:
+        text = f'🔍 Самозанятый {inn}: {_e(result.get("message", "Статус неизвестен"))}'
+    return [text]
 
 
 def format_risks(inn: str, data: dict) -> list:

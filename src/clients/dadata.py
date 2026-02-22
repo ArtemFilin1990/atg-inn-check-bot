@@ -39,6 +39,56 @@ class DadataClient:
     async def _find_by_id(self, query: str) -> List[Dict]:
         return await self._client.find_by_id(name='party', query=query, branch_type='MAIN')
 
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(_RETRY_COUNT + 1),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    async def _find_by_email_raw(self, email: str) -> List[Dict]:
+        return await self._client.find_by_email(name='party', query=email)
+
+    async def find_by_email(self, email: str) -> List[Dict]:
+        """Find companies by email address. Returns list of suggestions."""
+        try:
+            return await self._find_by_email_raw(email)
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            if status == 403:
+                logger.error("DaData daily quota exceeded (403) for email %s", email)
+            else:
+                logger.error("DaData HTTP error %s for email %s", status, email)
+            return []
+        except httpx.RequestError as e:
+            logger.error("DaData network error for email %s: %s", email, e)
+            return []
+        except Exception as e:
+            logger.exception("DaData find_by_email error for %s: %s", email, e)
+            return []
+
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(_RETRY_COUNT + 1),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    async def _find_affiliated_raw(self, inn: str) -> List[Dict]:
+        return await self._client.find_affiliated(query=inn)
+
+    async def find_affiliated(self, inn: str) -> List[Dict]:
+        """Find affiliated companies by INN. Returns list of suggestions."""
+        try:
+            return await self._find_affiliated_raw(inn)
+        except httpx.HTTPStatusError as e:
+            logger.error("DaData HTTP error %s for affiliated %s", e.response.status_code, inn)
+            return []
+        except httpx.RequestError as e:
+            logger.error("DaData network error for affiliated %s: %s", inn, e)
+            return []
+        except Exception as e:
+            logger.exception("DaData find_affiliated error for %s: %s", inn, e)
+            return []
+
     async def find_party(self, query: str) -> Optional[Dict]:
         """Find company or IP by INN or OGRN. Returns first suggestion or None."""
         try:
