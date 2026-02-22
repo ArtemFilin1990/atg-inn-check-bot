@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional, Dict
 import httpx
+from dadata import DadataAsync
 from cachetools import TTLCache
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -49,7 +50,7 @@ def validate_inn(text: str) -> Optional[str]:
     return None
 
 
-async def fetch_dadata(inn: str) -> Optional[Dict]:
+async def fetch_dadata(inn: str, client: DadataAsync) -> Optional[Dict]:
     if inn in cache:
         logger.debug("Cache hit for INN %s", inn)
         return cache[inn]
@@ -58,24 +59,13 @@ async def fetch_dadata(inn: str) -> Optional[Dict]:
     if not token or not secret:
         logger.error("DADATA_TOKEN or DADATA_SECRET is not set")
         return None
-    url = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party'
-    headers = {
-        'Authorization': f'Token {token}',
-        'X-Secret': secret,
-        'Content-Type': 'application/json'
-    }
-    payload = {'query': inn, 'branch_type': 'MAIN'}
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, headers=headers, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            suggestions = data.get('suggestions')
-            if suggestions:
-                result = suggestions[0]
-                cache[inn] = result
-                return result
-            logger.info("DaData returned no suggestions for INN %s", inn)
+        suggestions = await client.find_by_id(name="party", query=inn, branch_type="MAIN")
+        if suggestions:
+            result = suggestions[0]
+            cache[inn] = result
+            return result
+        logger.info("DaData returned no suggestions for INN %s", inn)
     except Exception as e:
         logger.exception("Error fetching data from DaData: %s", e)
     return None
@@ -311,7 +301,7 @@ async def handle_inn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info("User %s checking INN %s (mode=%s)", user_id, inn_raw, mode)
     await update.message.reply_text('Ищу информацию, пожалуйста, подождите...')
 
-    info = await fetch_dadata(inn_raw)
+    info = await fetch_dadata(inn_raw, context.bot_data['dadata_client'])
     if not info:
         logger.info("INN %s not found in DaData (user=%s)", inn_raw, user_id)
         await update.message.reply_text(
@@ -377,7 +367,18 @@ def build_application() -> Application:
     token = os.environ.get('BOT_TOKEN')
     if not token:
         raise RuntimeError('BOT_TOKEN is not set')
-    app = Application.builder().token(token).build()
+
+    async def post_init(app: Application) -> None:
+        dadata_token = os.environ.get('DADATA_TOKEN', '')
+        dadata_secret = os.environ.get('DADATA_SECRET', '')
+        app.bot_data['dadata_client'] = DadataAsync(dadata_token, dadata_secret)
+
+    async def post_shutdown(app: Application) -> None:
+        client: DadataAsync = app.bot_data.get('dadata_client')
+        if client:
+            await client.close()
+
+    app = Application.builder().token(token).post_init(post_init).post_shutdown(post_shutdown).build()
 
     conv_handler = ConversationHandler(
         entry_points=[
