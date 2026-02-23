@@ -9,7 +9,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 
 from bot.states import InnForm
 from bot.keyboards import MAIN_KEYBOARD, NAV_KEYBOARD, ORG_RESULT_KEYBOARD, SIMPLE_RESULT_KEYBOARD
-from bot.formatters import validate_inn, format_org_card, format_ip_card, paginate
+from bot.formatters import validate_inn, format_ip_card, paginate, format_summary_card
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -32,12 +32,12 @@ _BTN_HOME = '🏠 Домой'
 def _pick_card_format(mode: str, card_data: dict):
     entity_type = ((card_data.get('dadata') or {}).get('data') or {}).get('type', '')
     if mode == MODE_LEGAL:
-        return format_org_card(card_data), ORG_RESULT_KEYBOARD
+        return format_summary_card(card_data), ORG_RESULT_KEYBOARD
     if mode == MODE_INDIVIDUAL:
         return format_ip_card(card_data), SIMPLE_RESULT_KEYBOARD
     if entity_type == 'INDIVIDUAL':
         return format_ip_card(card_data), SIMPLE_RESULT_KEYBOARD
-    return format_org_card(card_data), ORG_RESULT_KEYBOARD
+    return format_summary_card(card_data), ORG_RESULT_KEYBOARD
 
 
 def _is_valid_person_query(text: str) -> bool:
@@ -94,8 +94,12 @@ async def _send_card(message: Message, mode: str, card_data: dict, sessions, use
         kb = keyboard if i == len(pages) - 1 else None
         await message.answer(page, reply_markup=kb)
 
-    for chunk in _json_pages(suggestions):
-        await message.answer(f'```json\n{chunk}\n```', parse_mode=None)
+    await sessions.set_field(user_id, 'menu_cache', {
+        'payload': suggestions,
+        'selected_main_idx': card_data.get('selected_main_idx', 0),
+        'last_query': card_data.get('query') or resolved_inn,
+        'saved_at': time.time(),
+    })
 
 
 @router.message(CommandStart())

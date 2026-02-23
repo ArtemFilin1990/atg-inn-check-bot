@@ -72,8 +72,11 @@ class DadataClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
-    async def _find_affiliated_raw(self, inn: str) -> List[Dict]:
-        return await self._client.find_affiliated(query=inn)
+    async def _find_affiliated_raw(self, inn: str, *, count: int = 20, scope: Optional[str] = None) -> List[Dict]:
+        kwargs = {'query': inn, 'count': count}
+        if scope:
+            kwargs['scope'] = scope
+        return await self._client.find_affiliated(**kwargs)
 
     @retry(
         retry=retry_if_exception(_is_retryable),
@@ -84,10 +87,10 @@ class DadataClient:
     async def _suggest_party_raw(self, query: str, count: int = 10) -> List[Dict]:
         return await self._client.suggest(name='party', query=query, count=count)
 
-    async def find_affiliated(self, inn: str) -> List[Dict]:
+    async def find_affiliated(self, inn: str, *, count: int = 20, scope: Optional[str] = None) -> List[Dict]:
         """Find affiliated companies by INN. Returns list of suggestions."""
         try:
-            return await self._find_affiliated_raw(inn)
+            return await self._find_affiliated_raw(inn=inn, count=count, scope=scope)
         except httpx.HTTPStatusError as e:
             logger.error("DaData HTTP error %s for affiliated %s", e.response.status_code, inn)
             return []
