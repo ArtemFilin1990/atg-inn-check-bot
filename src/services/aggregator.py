@@ -49,7 +49,12 @@ class Aggregator:
             kwargs['status'] = status
 
         suggestions = await self.dadata.find_by_id_party(query, **kwargs)
-        dadata_data = suggestions[0] if suggestions else None
+        main_idx = 0
+        for i, item in enumerate(suggestions or []):
+            if ((item.get('data') or {}).get('branch_type') or '').upper() == 'MAIN':
+                main_idx = i
+                break
+        dadata_data = suggestions[main_idx] if suggestions else None
 
         if not dadata_data:
             return None
@@ -66,6 +71,7 @@ class Aggregator:
             'suggestions': suggestions,
             'is_individual': is_individual,
             'okved_name': okved_name,
+            'selected_main_idx': main_idx,
         }
         resolved_inn = (
             ((dadata_data.get('data') or {}).get('inn'))
