@@ -28,7 +28,7 @@ def _cache_key(**kwargs: Any) -> str:
 async def find_by_id_party(
     api_key: str,
     query: str,
-    branch_type: str = "MAIN",
+    branch_type: str | None = None,
     count: int = 10,
     kpp: str | None = None,
     entity_type: str | None = None,
@@ -40,7 +40,7 @@ async def find_by_id_party(
     """
     key = _cache_key(
         query=query,
-        branch_type=branch_type,
+        branch_type=branch_type or "",
         count=count,
         kpp=kpp or "",
         entity_type=entity_type or "",
@@ -49,14 +49,16 @@ async def find_by_id_party(
         logger.debug("cache hit for %s", query)
         return _cache[key]
 
-    payload: dict[str, Any] = {"query": query, "branch_type": branch_type, "count": count}
+    payload: dict[str, Any] = {"query": query, "count": count}
+    if branch_type:
+        payload["branch_type"] = branch_type
     if kpp:
         payload["kpp"] = kpp
     if entity_type:
         payload["type"] = entity_type
 
     headers = {
-        "Content-Type": "application/json",
+        "Content-Type": "application/json; charset=utf-8",
         "Accept": "application/json",
         "Authorization": f"Token {api_key}",
     }

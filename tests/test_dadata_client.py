@@ -96,6 +96,19 @@ async def test_find_by_id_party_sends_correct_auth_header():
     assert headers.get("Authorization") == "Token my_secret_key"
 
 
+
+
+@pytest.mark.asyncio
+async def test_find_by_id_party_sends_json_headers():
+    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
+    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
+        await find_by_id_party("my_secret_key", "7707083893")
+    _, kwargs = mock_client.post.call_args
+    headers = kwargs.get("headers", {})
+    assert headers.get("Content-Type") == "application/json; charset=utf-8"
+    assert headers.get("Accept") == "application/json"
+
+
 @pytest.mark.asyncio
 async def test_find_by_id_party_sends_correct_payload():
     mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
@@ -106,6 +119,17 @@ async def test_find_by_id_party_sends_correct_payload():
     assert payload["query"] == "1234567890"
     assert payload["branch_type"] == "BRANCH"
     assert payload["count"] == 20
+
+
+
+
+@pytest.mark.asyncio
+async def test_find_by_id_party_excludes_branch_type_when_none():
+    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
+    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
+        await find_by_id_party("key", "7707083893")
+    _, kwargs = mock_client.post.call_args
+    assert "branch_type" not in kwargs["json"]
 
 
 @pytest.mark.asyncio
