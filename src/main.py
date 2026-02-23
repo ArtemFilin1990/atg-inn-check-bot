@@ -15,12 +15,20 @@ from services.aggregator import Aggregator
 from services.cache import SQLiteCache
 from services.reference_data import ReferenceData
 from storage.session_store import SessionStore
+from http_api import health_handler, create_lookup_handler, rate_limiter_from_env
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=os.environ.get('LOG_LEVEL', 'INFO'),
 )
 logger = logging.getLogger(__name__)
+
+
+def _resolve_webhook_url(webhook_base: str) -> str:
+    webhook_url = webhook_base or os.environ.get('WEBHOOK_URL', '').rstrip('/')
+    if not webhook_url:
+        raise RuntimeError('Webhook mode requires WEBHOOK_BASE or WEBHOOK_URL')
+    return webhook_url
 
 
 class ServiceMiddleware:
@@ -88,16 +96,14 @@ async def main():
             from aiohttp import web
             from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
             webhook_path = os.environ.get('WEBHOOK_PATH', '/webhook')
-            webhook_url = webhook_base or os.environ['WEBHOOK_URL']
+            webhook_url = _resolve_webhook_url(webhook_base)
             port = int(os.environ.get('PORT', '3000'))
             await bot.set_webhook(f'{webhook_url}{webhook_path}')
             app = web.Application()
             SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=webhook_path)
             setup_application(app, dp, bot=bot)
-            # health endpoint
-            async def health(_):
-                return web.Response(text='ok')
-            app.router.add_get('/health', health)
+            app.router.add_get('/health', health_handler)
+            app.router.add_post('/lookup', create_lookup_handler(aggregator, rate_limiter_from_env()))
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, '0.0.0.0', port)
