@@ -72,6 +72,11 @@ Telegram-бот на aiogram v3 для проверки компаний по И
 | `TELEGRAM_BOT_TOKEN`| ✅           | Токен Telegram-бота (от @BotFather)           |
 | `DADATA_API_KEY`    | ✅           | API-ключ DaData                               |
 | `WEBHOOK_URL`       | ✅           | Базовый URL сервиса (без `/tg/webhook`)       |
+| `POSTGRES_HOST`     | ❌           | Хост PostgreSQL (включает логирование запросов в БД) |
+| `POSTGRES_PORT`     | ❌           | Порт PostgreSQL (по умолчанию `5432`)         |
+| `POSTGRES_DB`       | ❌           | Имя базы данных PostgreSQL                     |
+| `POSTGRES_USER`     | ❌           | Пользователь PostgreSQL                        |
+| `POSTGRES_PASSWORD` | ❌           | Пароль PostgreSQL                              |
 | `PORT`              | ❌           | Порт сервера (по умолчанию `3000`)            |
 
 ---
@@ -127,7 +132,9 @@ Healthcheck доступен по `GET /health`.
 app/
   main.py           # FastAPI приложение + webhook wiring + setWebhook
   bot.py            # Handlers, keyboards, FSM states (aiogram v3)
+  config.py         # Конфигурация ENV (Telegram, DaData, PostgreSQL)
   dadata_client.py  # Async httpx клиент DaData + TTLCache 15 мин
+  db.py             # asyncpg pool + init таблицы + логирование запросов
   formatters.py     # Форматирование карточки / деталей / реквизитов / филиалов
   rate_limit.py     # Rate limit: per-user 1 req/0.5 сек
 tests/
