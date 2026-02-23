@@ -62,6 +62,20 @@ def test_format_card_escapes_markdown() -> None:
     assert "*OOO \\*A\\_\\[\\`*" in text
 
 
+@pytest.mark.asyncio
+async def test_fallback_handler_replies_with_welcome() -> None:
+    from unittest.mock import AsyncMock
+
+    from app.bot import MAIN_KEYBOARD, WELCOME_TEXT, fallback_handler
+
+    message = AsyncMock()
+    await fallback_handler(message)
+    message.answer.assert_awaited_once()
+    args, kwargs = message.answer.call_args
+    assert args[0] == WELCOME_TEXT
+    assert kwargs.get("reply_markup") is MAIN_KEYBOARD
+
+
 def test_parse_callback_data_validates_prefix_and_inn() -> None:
     assert bot_module._parse_callback_data("details:7707083893", "details") == "7707083893"
     assert bot_module._parse_callback_data("details:abc", "details") is None
