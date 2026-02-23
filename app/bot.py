@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
+
+import asyncpg
 
 import httpx
 from aiogram import Bot, Dispatcher, F, Router
@@ -19,13 +20,13 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from app.config import config
 from app.dadata_client import find_by_id_party, validate_inn
+from app.db import log_request
 from app.formatters import format_branch, format_card, format_details, format_requisites
 from app.rate_limit import check_rate_limit
 
 logger = logging.getLogger(__name__)
-
-DADATA_API_KEY: str = os.environ.get("DADATA_API_KEY", "")
 
 BTN_START = "🏁 Старт"
 BTN_HELLO = "👋 Привет"
@@ -67,13 +68,19 @@ def _card_inline(inn: str, branch_count: int = 0) -> InlineKeyboardMarkup:
 
 
 async def _lookup_and_reply(message: Message, inn: str) -> None:
-    if not DADATA_API_KEY:
+    if not config.DADATA_API_KEY:
         await message.answer("Ошибка: DADATA_API_KEY не настроен.")
         return
 
+    if db_pool is not None:
+        try:
+            await log_request(db_pool, inn)
+        except Exception as exc:
+            logger.warning("failed to log request to postgres: %s", exc)
+
     waiting_msg = await message.answer("🔍 Ищу данные…")
     try:
-        data = await find_by_id_party(DADATA_API_KEY, inn)
+        data = await find_by_id_party(config.DADATA_API_KEY, inn)
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         if code == 401:
@@ -164,12 +171,12 @@ async def process_digits_invalid(message: Message) -> None:
 @router.callback_query(F.data.startswith("details:"))
 async def cb_details(query: CallbackQuery) -> None:
     inn = (query.data or "").split(":", 1)[1]
-    if not DADATA_API_KEY:
+    if not config.DADATA_API_KEY:
         await query.answer("DADATA_API_KEY не настроен.", show_alert=True)
         return
     await query.answer()
     try:
-        data = await find_by_id_party(DADATA_API_KEY, inn)
+        data = await find_by_id_party(config.DADATA_API_KEY, inn)
     except Exception:
         await query.message.answer("Техническая ошибка, попробуйте позже.")
         return
@@ -184,12 +191,12 @@ async def cb_details(query: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("requisites:"))
 async def cb_requisites(query: CallbackQuery) -> None:
     inn = (query.data or "").split(":", 1)[1]
-    if not DADATA_API_KEY:
+    if not config.DADATA_API_KEY:
         await query.answer("DADATA_API_KEY не настроен.", show_alert=True)
         return
     await query.answer()
     try:
-        data = await find_by_id_party(DADATA_API_KEY, inn)
+        data = await find_by_id_party(config.DADATA_API_KEY, inn)
     except Exception:
         await query.message.answer("Техническая ошибка, попробуйте позже.")
         return
@@ -206,12 +213,12 @@ async def cb_branches(query: CallbackQuery) -> None:
     parts = (query.data or "").split(":")
     inn = parts[1]
     page = int(parts[2]) if len(parts) > 2 else 0
-    if not DADATA_API_KEY:
+    if not config.DADATA_API_KEY:
         await query.answer("DADATA_API_KEY не настроен.", show_alert=True)
         return
     await query.answer()
     try:
-        data = await find_by_id_party(DADATA_API_KEY, inn, branch_type="BRANCH", count=50)
+        data = await find_by_id_party(config.DADATA_API_KEY, inn, branch_type="BRANCH", count=50)
     except Exception:
         await query.message.answer("Техническая ошибка, попробуйте позже.")
         return
@@ -242,6 +249,15 @@ async def cb_branches(query: CallbackQuery) -> None:
         )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[nav_buttons]) if nav_buttons else None
     await query.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+
+db_pool: asyncpg.Pool[Any] | None = None
+
+
+def set_db_pool(pool: asyncpg.Pool[Any] | None) -> None:
+    global db_pool
+    db_pool = pool
 
 
 def create_dispatcher() -> Dispatcher:
