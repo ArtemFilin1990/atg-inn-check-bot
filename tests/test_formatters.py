@@ -5,6 +5,7 @@ import unittest
 from bot.formatters import (
     paginate, format_org_card, format_ip_card, format_courts,
     format_debts, format_bankruptcy, _fmt_money, PAGE_LIMIT,
+    format_summary_card, format_links_section, format_debt_section, format_court_section, format_json_section,
 )
 
 
@@ -109,6 +110,49 @@ class TestFormatBankruptcy(unittest.TestCase):
             'court': 'АС МО', 'stage': 'конкурсное', 'date': '2024-01-01',
         })
         self.assertIn('A40-5/24', pages[0])
+
+
+class TestMenuSections(unittest.TestCase):
+    def _entity(self):
+        return {
+            'dadata': {
+                'value': 'ООО Тест',
+                'data': {
+                    'inn': '7736207543',
+                    'kpp': '773601001',
+                    'ogrn': '1027700132195',
+                    'state': {'status': 'ACTIVE'},
+                    'address': {'value': 'г. Москва'},
+                    'okved': '62.01',
+                    'founders': [{'name': 'Иванов И.И.', 'inn': '500100732259'}],
+                    'managers': [{'name': 'Петров П.П.', 'post': 'Генеральный директор'}],
+                    'finance': {'year': 2023, 'debt': 1000, 'penalty': 50},
+                },
+            }
+        }
+
+    def test_summary_card(self):
+        text = format_summary_card(self._entity())
+        self.assertIn('ООО Тест', text)
+        self.assertIn('ACTIVE', text)
+
+    def test_links_section(self):
+        text = format_links_section(self._entity())
+        self.assertIn('Учредители', text)
+        self.assertIn('Руководители', text)
+
+    def test_debt_section(self):
+        text = format_debt_section(self._entity())
+        self.assertIn('Недоимки', text)
+
+    def test_court_section_empty(self):
+        text = format_court_section(self._entity())
+        self.assertIn('COURT не найдены', text)
+
+    def test_json_section_html_pre(self):
+        text = format_json_section({'payload': [{'x': '<tag>'}]})
+        self.assertTrue(text.startswith('<pre>'))
+        self.assertIn('&lt;tag&gt;', text)
 
 
 if __name__ == '__main__':

@@ -9,6 +9,7 @@ _STRICT = os.environ.get('STRICT_INN_CHECK', '').lower() == 'true'
 PAGE_LIMIT = 3800  # chars per Telegram message window
 MAX_EMAIL_RESULTS = 5
 MAX_AFFILIATES_DISPLAY = 10
+MAX_SECTION_LINES = 10
 
 
 def _e(v) -> str:
@@ -424,3 +425,110 @@ def format_risks(inn: str, data: dict) -> list:
         f'• Судебная активность: {data.get("court_risk") or "—"}'
     )
     return [text]
+
+
+def format_summary_card(data: dict) -> str:
+    dadata = data.get('dadata') or {}
+    dd = dadata.get('data') or {}
+    name = dadata.get('value') or dadata.get('unrestricted_value') or '—'
+    inn = dd.get('inn') or '—'
+    kpp = dd.get('kpp')
+    ogrn = dd.get('ogrn') or dd.get('ogrnip')
+    status = ((dd.get('state') or {}).get('status')) or '—'
+    address = ((dd.get('address') or {}).get('value') or (dd.get('address') or {}).get('unrestricted_value') or '—')
+    okved = dd.get('okved') or '—'
+    branch_count = dd.get('branch_count')
+
+    ids = [f'ИНН: {inn}']
+    if kpp:
+        ids.append(f'КПП: {kpp}')
+    if ogrn:
+        ids.append(f'ОГРН: {ogrn}')
+    lines = [
+        f'🏷 {_e(name)}',
+        ' / '.join(ids),
+        f'Статус: {_e(status)}',
+        f'Адрес: {_e(address)}',
+        f'ОКВЭД: {_e(okved)}',
+    ]
+    if branch_count is not None:
+        lines.append(f'Филиалов: {branch_count}')
+    return '\n'.join(lines)
+
+
+def format_links_section(data: dict) -> str:
+    dd = (data.get('dadata') or {}).get('data') or {}
+    lines = ['🔗 Связи']
+    founders = dd.get('founders') or []
+    managers = dd.get('managers') or []
+    predecessors = dd.get('predecessors') or []
+    successors = dd.get('successors') or []
+    if founders:
+        lines.append('Учредители:')
+        for f in founders[:MAX_SECTION_LINES]:
+            lines.append(f"• {_e(f.get('name') or f.get('fio') or '—')} ({f.get('inn') or 'ИНН —'})")
+    if managers:
+        lines.append('Руководители:')
+        for m in managers[:MAX_SECTION_LINES]:
+            lines.append(f"• {_e(m.get('name') or m.get('fio') or '—')} ({m.get('post') or 'роль —'})")
+    if predecessors:
+        lines.append('Правопредшественники:')
+        for p in predecessors[:MAX_SECTION_LINES]:
+            lines.append(f"• {_e(p.get('name') or '—')} ({p.get('inn') or 'ИНН —'})")
+    if successors:
+        lines.append('Правопреемники:')
+        for s in successors[:MAX_SECTION_LINES]:
+            lines.append(f"• {_e(s.get('name') or '—')} ({s.get('inn') or 'ИНН —'})")
+    if dd.get('branch_type') or dd.get('branch_count') is not None:
+        lines.append(f"Филиальность: {dd.get('branch_type') or '—'}, count={dd.get('branch_count') or 0}")
+    if len(lines) == 1:
+        lines.append('Данные не заполнены.')
+    return '\n'.join(lines)
+
+
+def format_debt_section(data: dict) -> str:
+    finance = ((data.get('dadata') or {}).get('data') or {}).get('finance') or {}
+    if not finance:
+        return '💰 Долги\nУ источника нет данных / не заполнено.'
+    return '\n'.join([
+        '💰 Долги',
+        f"Год: {finance.get('year') or '—'}",
+        f"Недоимки: {_fmt_money(finance.get('debt'))}",
+        f"Штрафы: {_fmt_money(finance.get('penalty'))}",
+        f"Доходы: {_fmt_money(finance.get('income') or finance.get('revenue'))}",
+        f"Расходы: {_fmt_money(finance.get('expense'))}",
+    ])
+
+
+def _court_decisions(entity: dict) -> list[str]:
+    invalidity = entity.get('invalidity') or {}
+    if invalidity.get('code') != 'COURT':
+        return []
+    decision = invalidity.get('decision') or {}
+    return [f"{decision.get('court_name') or 'Суд —'} / №{decision.get('number') or '—'} / {decision.get('date') or '—'}"]
+
+
+def format_court_section(data: dict) -> str:
+    dd = (data.get('dadata') or {}).get('data') or {}
+    lines = ['⚖️ Суды', f"Статус: {(dd.get('state') or {}).get('status') or '—'}"]
+    found = []
+    for founder in dd.get('founders') or []:
+        found.extend(_court_decisions(founder))
+    for manager in dd.get('managers') or []:
+        found.extend(_court_decisions(manager))
+    address = dd.get('address') or {}
+    found.extend(_court_decisions(address))
+    if found:
+        lines.append('Судебные решения (COURT):')
+        lines.extend(f'• {x}' for x in found[:MAX_SECTION_LINES])
+    else:
+        lines.append('Решения COURT не найдены.')
+    return '\n'.join(lines)
+
+
+def format_json_section(data: dict) -> str:
+    import json
+    payload = data.get('payload') or {}
+    raw = json.dumps(payload, ensure_ascii=False, indent=2)
+    # Bot default parse mode is HTML; return as escaped <pre> block.
+    return f'<pre>{_e(raw[:3500])}</pre>'
