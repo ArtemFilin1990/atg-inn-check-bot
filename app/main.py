@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from aiogram import Bot
+from pydantic import ValidationError
 from aiogram.types import Update
 from fastapi import FastAPI, Request, Response
 
@@ -67,8 +68,19 @@ app = FastAPI(title="ATG INN Check Bot", lifespan=lifespan)
 async def telegram_webhook(request: Request) -> Response:
     if bot is None:
         return Response(status_code=503)
-    body = await request.json()
-    update = Update.model_validate(body)
+
+    try:
+        body = await request.json()
+    except Exception:
+        logger.warning("Invalid JSON payload for /tg/webhook")
+        return Response(status_code=400)
+
+    try:
+        update = Update.model_validate(body)
+    except ValidationError:
+        logger.warning("Invalid Telegram update payload for /tg/webhook")
+        return Response(status_code=400)
+
     logger.info("Update received: %s", update.update_id)
     await dp.feed_update(bot=bot, update=update)
     return Response(status_code=200)
