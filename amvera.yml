@@ -9,4 +9,4 @@ build:
 run:
   command: python src/main.py
   persistenceMount: /data
-  containerPort: 80
+  containerPort: 3000
