@@ -166,6 +166,11 @@ async def process_digits_invalid(message: Message) -> None:
     await message.answer("Введите ИНН: 10 или 12 цифр, только цифры.")
 
 
+@router.message()
+async def fallback_handler(message: Message) -> None:
+    await message.answer(WELCOME_TEXT, reply_markup=MAIN_KEYBOARD)
+
+
 # ── Inline callbacks ──────────────────────────────────────────────────────────
 
 def _parse_callback_data(data: str | None, expected_prefix: str) -> str | None:
