@@ -11,10 +11,8 @@ import app.rate_limit as rl
 def reset_rate_limit_state():
     """Reset module-level state before each test."""
     rl._user_last.clear()
-    rl._global_last = 0.0
     yield
     rl._user_last.clear()
-    rl._global_last = 0.0
 
 
 @pytest.mark.asyncio
@@ -30,18 +28,11 @@ async def test_immediate_second_request_same_user_denied():
 
 
 @pytest.mark.asyncio
-async def test_different_users_share_global_limit():
-    """Two back-to-back requests from *different* users still hit the
-    global 25 req/s gate (40 ms window), so the second is rejected."""
+async def test_different_users_independent():
+    """Two back-to-back requests from *different* users are each allowed
+    since the global rate limit has been removed."""
     assert await rl.check_rate_limit(1) is True
-    # No sleep → global interval not elapsed → second user should be denied
-    assert await rl.check_rate_limit(2) is False
-
-
-@pytest.mark.asyncio
-async def test_request_allowed_after_global_cooldown():
-    assert await rl.check_rate_limit(1) is True
-    await asyncio.sleep(0.06)  # > 40 ms global interval
+    # Different user should not be affected by first user's request
     assert await rl.check_rate_limit(2) is True
 
 
@@ -56,12 +47,6 @@ async def test_same_user_allowed_after_per_user_cooldown():
 async def test_user_last_timestamp_updated_on_allow():
     await rl.check_rate_limit(7)
     assert rl._user_last[7] > 0.0
-
-
-@pytest.mark.asyncio
-async def test_global_last_timestamp_updated_on_allow():
-    await rl.check_rate_limit(1)
-    assert rl._global_last > 0.0
 
 
 @pytest.mark.asyncio

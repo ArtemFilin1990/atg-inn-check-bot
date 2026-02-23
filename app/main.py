@@ -53,6 +53,7 @@ async def telegram_webhook(request: Request) -> Response:
         return Response(status_code=503)
     body = await request.json()
     update = Update.model_validate(body)
+    logger.info("Update received: %s", update.update_id)
     await dp.feed_update(bot=bot, update=update)
     return Response(status_code=200)
 
