@@ -33,8 +33,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
         if config.WEBHOOK_URL:
             try:
-                await bot.set_webhook(config.WEBHOOK_URL + "/tg/webhook")
-                logger.info("Webhook set to %s/tg/webhook", config.WEBHOOK_URL)
+                webhook_base = config.WEBHOOK_URL.rstrip("/")
+                await bot.set_webhook(webhook_base + "/tg/webhook")
+                logger.info("Webhook set to %s/tg/webhook", webhook_base)
             except Exception as exc:
                 logger.exception("Failed to set webhook: %s", exc)
         else:
@@ -58,8 +59,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     set_db_pool(None)
     if db_pool is not None:
         await db_pool.close()
+        db_pool = None
     if bot:
         await bot.session.close()
+        bot = None
 
 
 app = FastAPI(title="ATG INN Check Bot", lifespan=lifespan)
@@ -72,7 +75,7 @@ async def telegram_webhook(request: Request) -> Response:
 
     try:
         body = await request.json()
-    except JSONDecodeError:
+    except (JSONDecodeError, ValueError):
         logger.warning("Invalid JSON payload for /tg/webhook")
         return Response(status_code=400)
 
