@@ -17,7 +17,7 @@ from app.db import create_pool, init_db, postgres_enabled
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+)g
 logger = logging.getLogger(__name__)
 
 dp = create_dispatcher()
@@ -72,7 +72,6 @@ async def telegram_webhook(request: Request) -> Response:
 
     try:
         body = await request.json()
-    except (JSONDecodeError, UnicodeDecodeError):
         logger.warning("Invalid JSON payload for /tg/webhook")
         return Response(status_code=400)
 
