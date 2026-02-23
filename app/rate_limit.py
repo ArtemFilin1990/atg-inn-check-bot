@@ -14,13 +14,13 @@ _MIN_INTERVAL = 1.0 / 25  # 40 ms
 
 async def check_rate_limit(user_id: int) -> bool:
     """Return True if request is allowed, False if rate-limited."""
+    global _global_last
     now = time.monotonic()
 
     async with _global_lock:
         elapsed = now - _global_last
         if elapsed < _MIN_INTERVAL:
             return False
-        global _global_last
         _global_last = now
 
     async with _user_lock:
