@@ -168,9 +168,26 @@ async def process_digits_invalid(message: Message) -> None:
 
 # ── Inline callbacks ──────────────────────────────────────────────────────────
 
+def _parse_callback_data(data: str | None, expected_prefix: str) -> str | None:
+    expected = f"{expected_prefix}:"
+    if not data or not data.startswith(expected):
+        return None
+    value = data[len(expected):]
+    if not value or not validate_inn(value):
+        return None
+    return value
+
+
+def _safe_requisites_code_block(text: str) -> str:
+    return text.replace("```", "'''")
+
+
 @router.callback_query(F.data.startswith("details:"))
 async def cb_details(query: CallbackQuery) -> None:
-    inn = (query.data or "").split(":", 1)[1]
+    inn = _parse_callback_data(query.data, "details")
+    if inn is None:
+        await query.answer("Некорректные данные кнопки.", show_alert=True)
+        return
     if not config.DADATA_API_KEY:
         await query.answer("DADATA_API_KEY не настроен.", show_alert=True)
         return
@@ -178,19 +195,25 @@ async def cb_details(query: CallbackQuery) -> None:
     try:
         data = await find_by_id_party(config.DADATA_API_KEY, inn)
     except Exception:
-        await query.message.answer("Техническая ошибка, попробуйте позже.")
+        if query.message is not None:
+            await query.message.answer("Техническая ошибка, попробуйте позже.")
         return
     suggestions = data.get("suggestions", [])
     if not suggestions:
-        await query.message.answer("Данные не найдены.")
+        if query.message is not None:
+            await query.message.answer("Данные не найдены.")
         return
     text = format_details(suggestions[0])
-    await query.message.answer(text, parse_mode="Markdown")
+    if query.message is not None:
+        await query.message.answer(text, parse_mode="Markdown")
 
 
 @router.callback_query(F.data.startswith("requisites:"))
 async def cb_requisites(query: CallbackQuery) -> None:
-    inn = (query.data or "").split(":", 1)[1]
+    inn = _parse_callback_data(query.data, "requisites")
+    if inn is None:
+        await query.answer("Некорректные данные кнопки.", show_alert=True)
+        return
     if not config.DADATA_API_KEY:
         await query.answer("DADATA_API_KEY не настроен.", show_alert=True)
         return
@@ -198,21 +221,34 @@ async def cb_requisites(query: CallbackQuery) -> None:
     try:
         data = await find_by_id_party(config.DADATA_API_KEY, inn)
     except Exception:
-        await query.message.answer("Техническая ошибка, попробуйте позже.")
+        if query.message is not None:
+            await query.message.answer("Техническая ошибка, попробуйте позже.")
         return
     suggestions = data.get("suggestions", [])
     if not suggestions:
-        await query.message.answer("Данные не найдены.")
+        if query.message is not None:
+            await query.message.answer("Данные не найдены.")
         return
     text = format_requisites(suggestions[0])
-    await query.message.answer(f"```\n{text}\n```", parse_mode="Markdown")
+    if query.message is not None:
+        await query.message.answer(f"```\n{_safe_requisites_code_block(text)}\n```", parse_mode="Markdown")
 
 
 @router.callback_query(F.data.startswith("branches:"))
 async def cb_branches(query: CallbackQuery) -> None:
     parts = (query.data or "").split(":")
+    if len(parts) < 2 or not validate_inn(parts[1]):
+        await query.answer("Некорректные данные кнопки.", show_alert=True)
+        return
     inn = parts[1]
-    page = int(parts[2]) if len(parts) > 2 else 0
+    try:
+        page = int(parts[2]) if len(parts) > 2 else 0
+    except ValueError:
+        await query.answer("Некорректный номер страницы.", show_alert=True)
+        return
+    if page < 0:
+        await query.answer("Некорректный номер страницы.", show_alert=True)
+        return
     if not config.DADATA_API_KEY:
         await query.answer("DADATA_API_KEY не настроен.", show_alert=True)
         return
@@ -220,17 +256,23 @@ async def cb_branches(query: CallbackQuery) -> None:
     try:
         data = await find_by_id_party(config.DADATA_API_KEY, inn, branch_type="BRANCH", count=50)
     except Exception:
-        await query.message.answer("Техническая ошибка, попробуйте позже.")
+        if query.message is not None:
+            await query.message.answer("Техническая ошибка, попробуйте позже.")
         return
     suggestions = data.get("suggestions", [])
     if not suggestions:
-        await query.message.answer("Филиалы не найдены.")
+        if query.message is not None:
+            await query.message.answer("Филиалы не найдены.")
         return
 
     page_size = 5
     total = len(suggestions)
     start = page * page_size
     end = start + page_size
+    if start >= total:
+        page = max((total - 1) // page_size, 0)
+        start = page * page_size
+        end = start + page_size
     chunk = suggestions[start:end]
 
     lines = [f"🏢 *Филиалы* (стр. {page + 1}/{(total + page_size - 1) // page_size})\n"]
@@ -248,7 +290,8 @@ async def cb_branches(query: CallbackQuery) -> None:
             InlineKeyboardButton(text="▶️ След.", callback_data=f"branches:{inn}:{page + 1}")
         )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[nav_buttons]) if nav_buttons else None
-    await query.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+    if query.message is not None:
+        await query.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
 
 

@@ -38,6 +38,13 @@ async def find_by_id_party(
     Raises httpx.HTTPStatusError on non-2xx responses.
     Raises httpx.TimeoutException on timeout.
     """
+    if not api_key.strip():
+        raise ValueError("DADATA api_key must not be empty")
+    if not query.strip():
+        raise ValueError("DaData query must not be empty")
+    if count <= 0:
+        raise ValueError("count must be greater than 0")
+
     key = _cache_key(
         query=query,
         branch_type=branch_type or "",
@@ -67,6 +74,9 @@ async def find_by_id_party(
         resp = await client.post(DADATA_FINDBYID_URL, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
+
+    if not isinstance(data, dict):
+        raise ValueError("DaData response must be a JSON object")
 
     _cache[key] = data
     return data
