@@ -1,7 +1,11 @@
 # atg-inn-check-bot
 
-Telegram-бот на aiogram v3 для проверки компаний по ИНН/ОГРН/названию через DaData API.  
-Деплой: Amvera, режим: webhook, веб-фреймворк: FastAPI + uvicorn.
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)
+![aiogram 3.x](https://img.shields.io/badge/aiogram-3.x-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688)
+
+Telegram-бот на **aiogram v3** для быстрой и удобной проверки юридических лиц и ИП по ИНН через **DaData API**.  
+Оптимизирован для деплоя на **Amvera** (режим webhook, на базе **FastAPI + uvicorn**).
 
 ---
 
@@ -9,7 +13,7 @@ Telegram-бот на aiogram v3 для проверки компаний по И
 
 ### 🔍 Карточка компании
 
-По ИНН/ОГРН/названию бот запрашивает данные через DaData API по цепочке `suggest/party → findById/party` и выводит короткую карточку:
+По ИНН бот запрашивает данные через DaData API методом `findById/party` и выводит короткую карточку:
 
 - **Название** — краткое с ОПФ
 - **ИНН / ОГРН / КПП** — в формате для копирования
@@ -27,7 +31,8 @@ Telegram-бот на aiogram v3 для проверки компаний по И
 
 - **⚖️ Суды** — статус и юридические сигналы из DaData; полные списки дел требуют внешнего провайдера
 - **💰 Оборот** — `finance.year/revenue/income/expense` из DaData
-- **🧾 Долги** — `finance.debt/penalty` из DaData (при наличии в тарифе)
+- **🧾 Долги** — `finance.debt` из DaData (при наличии в тарифе)
+- **⚠️ Штрафы** — `finance.penalty` из DaData (при наличии в тарифе)
 - **📄 Реквизиты** — готовый блок для копирования
 - **📞 Контакты** — телефоны и email
 - **👥 Учредители** — список учредителей и доли
@@ -92,20 +97,44 @@ Telegram-бот на aiogram v3 для проверки компаний по И
 
 ## Запуск локально
 
+### Быстрый старт (рекомендуется)
+
 ```bash
-# 1. Установите зависимости
+# 1. Bootstrap: создать venv и установить зависимости
+bash scripts/bootstrap.sh
+
+# 2. Настроить переменные окружения
+cp .env.example .env
+# Отредактируйте .env и заполните TELEGRAM_BOT_TOKEN, DADATA_API_KEY, WEBHOOK_URL
+
+# 3. Запустить тесты
+bash scripts/test.sh -q
+
+# 4. Запустить сервер (считывает .env автоматически)
+bash scripts/run.sh
+```
+
+### Вручную (без скриптов)
+
+```bash
+# 1. Создайте и активируйте виртуальное окружение
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. Установите зависимости
+pip install --upgrade pip
 pip install -r requirements.txt
 
-# 2. Задайте переменные окружения
+# 3. Задайте переменные окружения
 export TELEGRAM_BOT_TOKEN=<ваш токен>
 export DADATA_API_KEY=<ваш ключ>
 export WEBHOOK_URL=https://your-ngrok-or-domain.example.com
 export PORT=3000
 
-# 3. Запустите тесты
+# 4. Запустите тесты
 pytest -q
 
-# 4. Запустите сервер
+# 5. Запустите сервер
 uvicorn app.main:app --host 0.0.0.0 --port 3000
 ```
 
@@ -113,10 +142,32 @@ uvicorn app.main:app --host 0.0.0.0 --port 3000
 
 ```bash
 ngrok http 3000
-# Скопируйте HTTPS URL и установите его в WEBHOOK_URL
+# Скопируйте HTTPS URL и установите его в WEBHOOK_URL (в .env или export)
 ```
 
 ---
+
+
+## Проверенный локальный запуск (smoke)
+
+Для smoke-проверки сервиса (endpoint `/health`) можно запускать приложение с тестовыми значениями ENV:
+
+```bash
+export TELEGRAM_BOT_TOKEN=123456:ABCdefGhIkl-zyx57W2v1u123ew11
+export DADATA_API_KEY=dummy
+export WEBHOOK_URL=
+uvicorn app.main:app --host 127.0.0.1 --port 3000
+```
+
+Проверка:
+
+```bash
+curl http://127.0.0.1:3000/health
+# {"status":"ok"}
+```
+
+> Важно: даже для локального запуска `TELEGRAM_BOT_TOKEN` должен иметь корректный формат токена Telegram,
+> иначе приложение завершится на старте из-за валидации aiogram.
 
 ## Деплой на Amvera
 
@@ -135,9 +186,13 @@ Healthcheck доступен по `GET /health`.
 
 ---
 
+## Методы DaData
+
+Подтверждённые в коде проекта методы и параметры DaData (включая соответствие логике страницы `api/find-party` и примечание по `dadata-py`) вынесены в отдельный документ: `docs/dadata_methods.md`.
+
 ## Структура проекта
 
-```
+```text
 app/
   main.py           # FastAPI приложение + webhook wiring + setWebhook
   bot.py            # Handlers, keyboards, FSM states (aiogram v3)
@@ -145,7 +200,6 @@ app/
   dadata_client.py  # Async httpx клиент DaData + TTLCache 15 мин
   db.py             # asyncpg pool + init таблицы + логирование запросов
   formatters.py     # Форматирование карточки / деталей / реквизитов / филиалов
-  rate_limit.py     # Rate limit: per-user 1 req/0.5 сек
 tests/
   test_validation.py  # Unit-тесты валидации ИНН
   test_formatters.py  # Unit-тесты форматирования карточки
