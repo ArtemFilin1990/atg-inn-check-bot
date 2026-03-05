@@ -93,20 +93,44 @@ Telegram-бот на aiogram v3 для проверки компаний по И
 
 ## Запуск локально
 
+### Быстрый старт (рекомендуется)
+
 ```bash
-# 1. Установите зависимости
+# 1. Bootstrap: создать venv и установить зависимости
+bash scripts/bootstrap.sh
+
+# 2. Настроить переменные окружения
+cp .env.example .env
+# Отредактируйте .env и заполните TELEGRAM_BOT_TOKEN, DADATA_API_KEY, WEBHOOK_URL
+
+# 3. Запустить тесты
+bash scripts/test.sh -q
+
+# 4. Запустить сервер (считывает .env автоматически)
+bash scripts/run.sh
+```
+
+### Вручную (без скриптов)
+
+```bash
+# 1. Создайте и активируйте виртуальное окружение
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. Установите зависимости
+pip install --upgrade pip
 pip install -r requirements.txt
 
-# 2. Задайте переменные окружения
+# 3. Задайте переменные окружения
 export TELEGRAM_BOT_TOKEN=<ваш токен>
 export DADATA_API_KEY=<ваш ключ>
 export WEBHOOK_URL=https://your-ngrok-or-domain.example.com
 export PORT=3000
 
-# 3. Запустите тесты
+# 4. Запустите тесты
 pytest -q
 
-# 4. Запустите сервер
+# 5. Запустите сервер
 uvicorn app.main:app --host 0.0.0.0 --port 3000
 ```
 
@@ -114,7 +138,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 3000
 
 ```bash
 ngrok http 3000
-# Скопируйте HTTPS URL и установите его в WEBHOOK_URL
+# Скопируйте HTTPS URL и установите его в WEBHOOK_URL (в .env или export)
 ```
 
 ---
