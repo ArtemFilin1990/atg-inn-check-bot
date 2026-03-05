@@ -85,7 +85,7 @@ Telegram-бот на **aiogram v3** для быстрой и удобной пр
 |---------------------|-------------|-----------------------------------------------|
 | `TELEGRAM_BOT_TOKEN`| ✅           | Токен Telegram-бота (от @BotFather)           |
 | `DADATA_API_KEY`    | ✅           | API-ключ DaData                               |
-| `WEBHOOK_URL`       | ✅           | Базовый URL сервиса (без `/tg/webhook`)       |
+| `WEBHOOK_URL`       | ⚠️           | Базовый URL сервиса (без `/tg/webhook`), обязателен для Telegram webhook; может быть пустым для локального smoke `/health` |
 | `POSTGRES_HOST`     | ❌           | Хост PostgreSQL (включает логирование запросов в БД) |
 | `POSTGRES_PORT`     | ❌           | Порт PostgreSQL (по умолчанию `5432`)         |
 | `POSTGRES_DB`       | ❌           | Имя базы данных PostgreSQL                     |
@@ -168,6 +168,14 @@ curl http://127.0.0.1:3000/health
 
 > Важно: даже для локального запуска `TELEGRAM_BOT_TOKEN` должен иметь корректный формат токена Telegram,
 > иначе приложение завершится на старте из-за валидации aiogram.
+
+### Типичные ошибки ENV / webhook
+
+- `WEBHOOK_URL` пустой — приложение стартует, но webhook не регистрируется (это ожидаемо для локального smoke).
+- `WEBHOOK_URL` невалидный (без `http(s)://...`) — в логах WARNING, `setWebhook` пропускается.
+- `TELEGRAM_BOT_TOKEN` пустой — `POST /tg/webhook` возвращает `503`, `/health` продолжает работать.
+- Ошибка `401` при запросах в DaData — неверный `DADATA_API_KEY`.
+- Ошибка `403`/`429` в DaData — лимиты тарифа/частоты запросов.
 
 ## Деплой на Amvera
 
