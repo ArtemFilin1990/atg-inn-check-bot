@@ -118,6 +118,28 @@ ngrok http 3000
 
 ---
 
+
+## Проверенный локальный запуск (smoke)
+
+Для smoke-проверки сервиса (endpoint `/health`) можно запускать приложение с тестовыми значениями ENV:
+
+```bash
+export TELEGRAM_BOT_TOKEN=123456:ABCdefGhIkl-zyx57W2v1u123ew11
+export DADATA_API_KEY=dummy
+export WEBHOOK_URL=
+uvicorn app.main:app --host 127.0.0.1 --port 3000
+```
+
+Проверка:
+
+```bash
+curl http://127.0.0.1:3000/health
+# {"status":"ok"}
+```
+
+> Важно: даже для локального запуска `TELEGRAM_BOT_TOKEN` должен иметь корректный формат токена Telegram,
+> иначе приложение завершится на старте из-за валидации aiogram.
+
 ## Деплой на Amvera
 
 1. Создайте проект в [Amvera](https://amvera.ru/), выберите тип **«Веб-сервис»**.
@@ -134,6 +156,10 @@ Webhook Telegram регистрируется автоматически при 
 Healthcheck доступен по `GET /health`.
 
 ---
+
+## Методы DaData
+
+Подтверждённые в коде проекта методы и параметры DaData (включая соответствие логике страницы `api/find-party` и примечание по `dadata-py`) вынесены в отдельный документ: `docs/dadata_methods.md`.
 
 ## Структура проекта
 
