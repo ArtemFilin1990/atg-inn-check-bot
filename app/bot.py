@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import asyncpg
-
 import httpx
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import Dispatcher, F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -21,66 +21,112 @@ from aiogram.types import (
 )
 
 from app.config import config
-from app.dadata_client import find_by_id_party, validate_inn
+from app.dadata_client import find_party_universal, normalize_query_input, validate_inn
 from app.db import log_request
-from app.formatters import format_branch, format_card, format_details, format_requisites
+from app.formatters import (
+    format_card,
+    format_contacts,
+    format_courts,
+    format_debts,
+    format_founders,
+    format_requisites,
+    format_turnover,
+)
 from app.rate_limit import check_rate_limit
 
 logger = logging.getLogger(__name__)
 
-BTN_START = "🏁 Старт"
-BTN_HELLO = "👋 Привет"
-BTN_CHECK = "🔎 Проверить ИНН"
-
+WELCOME_TEXT = "Отправьте ИНН / ОГРН / название — верну короткую карточку и кнопки разделов."
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text=BTN_START), KeyboardButton(text=BTN_HELLO)],
-        [KeyboardButton(text=BTN_CHECK)],
-    ],
+    keyboard=[[KeyboardButton(text="🔎 Проверить")]],
     resize_keyboard=True,
 )
 
-WELCOME_TEXT = (
-    "Привет! Я бот для проверки компаний по ИНН.\n\n"
-    "Нажмите «🔎 Проверить ИНН» или просто отправьте 10 или 12 цифр ИНН."
-)
+CACHE_TTL_SEC = 600
+_context_cache: dict[str, dict[str, Any]] = {}
 
 
 class InnForm(StatesGroup):
-    waiting_inn = State()
+    waiting_query = State()
 
 
 router = Router()
 
 
-def _card_inline(inn: str, branch_count: int = 0) -> InlineKeyboardMarkup:
-    buttons: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(text="📋 Подробнее", callback_data=f"details:{inn}"),
-            InlineKeyboardButton(text="📋 Скопировать реквизиты", callback_data=f"requisites:{inn}"),
+def _cache_set(key: str, value: dict[str, Any]) -> None:
+    _context_cache[key] = {"ts": time.time(), "value": value}
+
+
+def _cache_get(key: str) -> dict[str, Any] | None:
+    item = _context_cache.get(key)
+    if not item:
+        return None
+    if time.time() - item["ts"] > CACHE_TTL_SEC:
+        _context_cache.pop(key, None)
+        return None
+    return item["value"]
+
+
+def _build_context_key(data: dict[str, Any]) -> str:
+    inn = (data.get("inn") or "").strip()
+    ogrn = (data.get("ogrn") or "").strip()
+    return inn or ogrn
+
+
+def _base_inline(context_key: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚖️ Суды", callback_data=f"courts:{context_key}"),
+                InlineKeyboardButton(text="💰 Оборот", callback_data=f"turnover:{context_key}"),
+                InlineKeyboardButton(text="🧾 Долги", callback_data=f"debts:{context_key}"),
+            ],
+            [
+                InlineKeyboardButton(text="📄 Реквизиты", callback_data=f"requisites:{context_key}"),
+                InlineKeyboardButton(text="📞 Контакты", callback_data=f"contacts:{context_key}"),
+                InlineKeyboardButton(text="👥 Учредители", callback_data=f"founders:{context_key}"),
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ Карточка", callback_data=f"card:{context_key}"),
+                InlineKeyboardButton(text="🔁 Новый поиск", callback_data="newsearch:0"),
+            ],
         ]
-    ]
-    if branch_count > 0:
-        buttons.append(
-            [InlineKeyboardButton(text=f"🏢 Филиалы ({branch_count})", callback_data=f"branches:{inn}:0")]
-        )
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
 
 
-async def _lookup_and_reply(message: Message, inn: str) -> None:
+def _parse_callback_data(data: str | None, expected_prefix: str) -> str | None:
+    expected = f"{expected_prefix}:"
+    if not data or not data.startswith(expected):
+        return None
+    value = data[len(expected) :]
+    if not value or not validate_inn(value):
+        return None
+    return value
+
+
+def _safe_requisites_code_block(text: str) -> str:
+    return text.replace("```", "'''")
+
+
+async def _lookup_and_reply(message: Message, query_text: str) -> None:
     if not config.DADATA_API_KEY:
         await message.answer("Ошибка: DADATA_API_KEY не настроен.")
         return
 
-    if db_pool is not None:
+    query, query_kind = normalize_query_input(query_text)
+    if not query:
+        await message.answer("Пришлите ИНН, ОГРН или название компании.")
+        return
+
+    if db_pool is not None and query_kind in {"inn", "ogrn"}:
         try:
-            await log_request(db_pool, inn)
+            await log_request(db_pool, query)
         except Exception as exc:
             logger.warning("failed to log request to postgres: %s", exc)
 
     waiting_msg = await message.answer("🔍 Ищу данные…")
     try:
-        data = await find_by_id_party(config.DADATA_API_KEY, inn)
+        data = await find_party_universal(config.DADATA_API_KEY, query, count=1)
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         if code == 401:
@@ -103,15 +149,22 @@ async def _lookup_and_reply(message: Message, inn: str) -> None:
 
     suggestions: list[dict[str, Any]] = data.get("suggestions", [])
     if not suggestions:
-        await waiting_msg.edit_text("Компания не найдена.")
+        await waiting_msg.edit_text("Ничего не нашёл. Проверьте ИНН/ОГРН или уточните название.")
         return
 
     suggestion = suggestions[0]
-    d = suggestion.get("data", {})
-    branch_count: int = d.get("branch_count") or 0
-    card_text = format_card(suggestion)
-    keyboard = _card_inline(inn, branch_count)
-    await waiting_msg.edit_text(card_text, reply_markup=keyboard, parse_mode="Markdown")
+    party = suggestion.get("data", {})
+    context_key = _build_context_key(party)
+    if not context_key:
+        await waiting_msg.edit_text("Не удалось выделить ИНН/ОГРН из ответа DaData.")
+        return
+
+    _cache_set(f"party:{context_key}", suggestion)
+    await waiting_msg.edit_text(
+        format_card(suggestion),
+        reply_markup=_base_inline(context_key),
+        parse_mode="Markdown",
+    )
 
 
 @router.message(CommandStart())
@@ -120,50 +173,19 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     await message.answer(WELCOME_TEXT, reply_markup=MAIN_KEYBOARD)
 
 
-@router.message(F.text == BTN_START)
-async def btn_start(message: Message, state: FSMContext) -> None:
+@router.message(F.text)
+async def process_query(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer(WELCOME_TEXT, reply_markup=MAIN_KEYBOARD)
-
-
-@router.message(F.text == BTN_HELLO)
-async def btn_hello(message: Message) -> None:
-    await message.answer("👋 Привет! Отправьте ИНН (10 или 12 цифр) для поиска.")
-
-
-@router.message(F.text == BTN_CHECK)
-async def btn_check(message: Message, state: FSMContext) -> None:
-    await state.set_state(InnForm.waiting_inn)
-    await message.answer("Введите ИНН (10 или 12 цифр):")
-
-
-@router.message(InnForm.waiting_inn)
-async def process_inn_state(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    inn = (message.text or "").strip()
-    if not validate_inn(inn):
-        await message.answer("Введите ИНН: 10 или 12 цифр, только цифры.")
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer("Пришлите ИНН, ОГРН или название компании.")
         return
+
     user_id = message.from_user.id if message.from_user else 0
     if not await check_rate_limit(user_id):
         await message.answer("Слишком много запросов, подождите немного.")
         return
-    await _lookup_and_reply(message, inn)
-
-
-@router.message(F.text.regexp(r"^\d{10}$|^\d{12}$"))
-async def process_inn_direct(message: Message, state: FSMContext) -> None:
-    inn = (message.text or "").strip()
-    user_id = message.from_user.id if message.from_user else 0
-    if not await check_rate_limit(user_id):
-        await message.answer("Слишком много запросов, подождите немного.")
-        return
-    await _lookup_and_reply(message, inn)
-
-
-@router.message(F.text.regexp(r"^\d+$"))
-async def process_digits_invalid(message: Message) -> None:
-    await message.answer("Введите ИНН: 10 или 12 цифр, только цифры.")
+    await _lookup_and_reply(message, query)
 
 
 @router.message()
@@ -171,133 +193,68 @@ async def fallback_handler(message: Message) -> None:
     await message.answer(WELCOME_TEXT, reply_markup=MAIN_KEYBOARD)
 
 
-# ── Inline callbacks ──────────────────────────────────────────────────────────
-
-def _parse_callback_data(data: str | None, expected_prefix: str) -> str | None:
-    expected = f"{expected_prefix}:"
-    if not data or not data.startswith(expected):
-        return None
-    value = data[len(expected):]
-    if not value or not validate_inn(value):
-        return None
-    return value
+@router.callback_query(F.data.startswith("newsearch:"))
+async def cb_new_search(query: CallbackQuery) -> None:
+    await query.answer()
+    if query.message is not None:
+        await query.message.answer("Ок. Пришлите новый ИНН/ОГРН/название.")
 
 
-def _safe_requisites_code_block(text: str) -> str:
-    return text.replace("```", "'''")
+@router.callback_query(F.data.regexp(r"^(card|courts|turnover|debts|requisites|contacts|founders):"))
+async def cb_sections(query: CallbackQuery) -> None:
+    raw = query.data or ""
+    action, context_key = raw.split(":", 1)
+    party = _cache_get(f"party:{context_key}")
+
+    if party is None:
+        await query.answer("Кэш истёк", show_alert=True)
+        if query.message is not None:
+            await query.message.answer("Кэш истёк. Пришлите ИНН/ОГРН/название заново.")
+        return
+
+    await query.answer()
+    if query.message is None:
+        return
+
+    if action == "card":
+        text = format_card(party)
+    elif action == "courts":
+        text = format_courts(party)
+    elif action == "turnover":
+        text = format_turnover(party)
+    elif action == "debts":
+        text = format_debts(party)
+    elif action == "contacts":
+        text = format_contacts(party)
+    elif action == "founders":
+        text = format_founders(party)
+    elif action == "requisites":
+        requisites = _safe_requisites_code_block(format_requisites(party))
+        text = f"```\n{requisites}\n```"
+    else:
+        text = "Неизвестный раздел."
+
+    await query.message.edit_text(
+        text,
+        reply_markup=_base_inline(context_key),
+        parse_mode="Markdown",
+    )
 
 
 @router.callback_query(F.data.startswith("details:"))
-async def cb_details(query: CallbackQuery) -> None:
+async def cb_details_legacy(query: CallbackQuery) -> None:
     inn = _parse_callback_data(query.data, "details")
     if inn is None:
         await query.answer("Некорректные данные кнопки.", show_alert=True)
         return
-    if not config.DADATA_API_KEY:
-        await query.answer("DADATA_API_KEY не настроен.", show_alert=True)
-        return
+    party = _cache_get(f"party:{inn}")
     await query.answer()
-    try:
-        data = await find_by_id_party(config.DADATA_API_KEY, inn)
-    except Exception:
-        if query.message is not None:
-            await query.message.answer("Техническая ошибка, попробуйте позже.")
-        return
-    suggestions = data.get("suggestions", [])
-    if not suggestions:
-        if query.message is not None:
-            await query.message.answer("Данные не найдены.")
-        return
-    text = format_details(suggestions[0])
-    if query.message is not None:
-        await query.message.answer(text, parse_mode="Markdown")
-
-
-@router.callback_query(F.data.startswith("requisites:"))
-async def cb_requisites(query: CallbackQuery) -> None:
-    inn = _parse_callback_data(query.data, "requisites")
-    if inn is None:
-        await query.answer("Некорректные данные кнопки.", show_alert=True)
-        return
-    if not config.DADATA_API_KEY:
-        await query.answer("DADATA_API_KEY не настроен.", show_alert=True)
-        return
-    await query.answer()
-    try:
-        data = await find_by_id_party(config.DADATA_API_KEY, inn)
-    except Exception:
-        if query.message is not None:
-            await query.message.answer("Техническая ошибка, попробуйте позже.")
-        return
-    suggestions = data.get("suggestions", [])
-    if not suggestions:
-        if query.message is not None:
-            await query.message.answer("Данные не найдены.")
-        return
-    text = format_requisites(suggestions[0])
-    if query.message is not None:
-        await query.message.answer(f"```\n{_safe_requisites_code_block(text)}\n```", parse_mode="Markdown")
-
-
-@router.callback_query(F.data.startswith("branches:"))
-async def cb_branches(query: CallbackQuery) -> None:
-    parts = (query.data or "").split(":")
-    if len(parts) < 2 or not validate_inn(parts[1]):
-        await query.answer("Некорректные данные кнопки.", show_alert=True)
-        return
-    inn = parts[1]
-    try:
-        page = int(parts[2]) if len(parts) > 2 else 0
-    except ValueError:
-        await query.answer("Некорректный номер страницы.", show_alert=True)
-        return
-    if page < 0:
-        await query.answer("Некорректный номер страницы.", show_alert=True)
-        return
-    if not config.DADATA_API_KEY:
-        await query.answer("DADATA_API_KEY не настроен.", show_alert=True)
-        return
-    await query.answer()
-    try:
-        data = await find_by_id_party(config.DADATA_API_KEY, inn, branch_type="BRANCH", count=50)
-    except Exception:
-        if query.message is not None:
-            await query.message.answer("Техническая ошибка, попробуйте позже.")
-        return
-    suggestions = data.get("suggestions", [])
-    if not suggestions:
-        if query.message is not None:
-            await query.message.answer("Филиалы не найдены.")
-        return
-
-    page_size = 5
-    total = len(suggestions)
-    start = page * page_size
-    end = start + page_size
-    if start >= total:
-        page = max((total - 1) // page_size, 0)
-        start = page * page_size
-        end = start + page_size
-    chunk = suggestions[start:end]
-
-    lines = [f"🏢 *Филиалы* (стр. {page + 1}/{(total + page_size - 1) // page_size})\n"]
-    for i, s in enumerate(chunk, start=start + 1):
-        lines.append(f"{i}. {format_branch(s)}")
-    text = "\n\n".join(lines)
-
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(
-            InlineKeyboardButton(text="◀️ Пред.", callback_data=f"branches:{inn}:{page - 1}")
+    if query.message is not None and party is not None:
+        await query.message.edit_text(
+            format_card(party),
+            reply_markup=_base_inline(inn),
+            parse_mode="Markdown",
         )
-    if end < total:
-        nav_buttons.append(
-            InlineKeyboardButton(text="▶️ След.", callback_data=f"branches:{inn}:{page + 1}")
-        )
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[nav_buttons]) if nav_buttons else None
-    if query.message is not None:
-        await query.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
-
 
 
 db_pool: asyncpg.Pool[Any] | None = None
