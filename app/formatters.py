@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 _MARKDOWN_SPECIAL_CHARS = "_*`["
@@ -25,6 +26,17 @@ def _s(val: Any, default: str = "") -> str:
 
 def _status_label(status: str) -> str:
     return _STATUS_LABELS.get(status, status or "—")
+
+
+def _format_date(val: Any) -> str:
+    """Convert DaData registration_date (ms timestamp or date string) to DD.MM.YYYY."""
+    if val is None or val == "":
+        return "—"
+    try:
+        ms = int(val)
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%d.%m.%Y")
+    except (TypeError, ValueError):
+        return str(val)
 
 
 def _format_money(value: Any) -> str:
@@ -55,7 +67,7 @@ def format_card(suggestion: dict[str, Any]) -> str:
         f"🏢 *{_md(name)}*",
         f"Статус: *{_md(_status_label(_s(state.get('status'), '—')))}*",
         f"ИНН: `{_md(_s(data.get('inn'), '—'))}` | ОГРН: `{_md(_s(data.get('ogrn'), '—'))}` | КПП: `{_md(_s(data.get('kpp'), '—'))}`",
-        f"Регистрация: *{_md(_s(state.get('registration_date'), '—'))}*",
+        f"Регистрация: *{_md(_format_date(state.get('registration_date')))}*",
         f"Адрес: {_md(_short_address(data))}",
         f"Руководитель: {_md(_s((data.get('management') or {}).get('name'), '—'))}",
         f"ОКВЭД: `{_md(_s(data.get('okved'), '—'))}`",

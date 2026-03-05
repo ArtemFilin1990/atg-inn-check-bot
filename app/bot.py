@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 import asyncpg
@@ -9,8 +8,8 @@ import httpx
 from aiogram import Dispatcher, F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from cachetools import TTLCache
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -43,28 +42,17 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 CACHE_TTL_SEC = 600
-_context_cache: dict[str, dict[str, Any]] = {}
-
-
-class InnForm(StatesGroup):
-    waiting_query = State()
-
+_context_cache: TTLCache = TTLCache(maxsize=1000, ttl=CACHE_TTL_SEC)
 
 router = Router()
 
 
 def _cache_set(key: str, value: dict[str, Any]) -> None:
-    _context_cache[key] = {"ts": time.time(), "value": value}
+    _context_cache[key] = value
 
 
 def _cache_get(key: str) -> dict[str, Any] | None:
-    item = _context_cache.get(key)
-    if not item:
-        return None
-    if time.time() - item["ts"] > CACHE_TTL_SEC:
-        _context_cache.pop(key, None)
-        return None
-    return item["value"]
+    return _context_cache.get(key)
 
 
 def _build_context_key(data: dict[str, Any]) -> str:
