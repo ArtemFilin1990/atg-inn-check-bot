@@ -21,7 +21,7 @@ from aiogram.types import (
 )
 
 from app.config import config
-from app.dadata_client import find_party_universal, normalize_query_input, validate_inn
+from app.dadata_client import find_party_universal, normalize_query_input, validate_inn, validate_ogrn
 from app.db import log_request
 from app.formatters import (
     format_card,
@@ -99,7 +99,7 @@ def _parse_callback_data(data: str | None, expected_prefix: str) -> str | None:
     if not data or not data.startswith(expected):
         return None
     value = data[len(expected) :]
-    if not value or not validate_inn(value):
+    if not value or not (validate_inn(value) or validate_ogrn(value)):
         return None
     return value
 
