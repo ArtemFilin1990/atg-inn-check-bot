@@ -154,6 +154,20 @@ def format_debts(suggestion: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+
+def format_penalties(suggestion: dict[str, Any]) -> str:
+    finance = (suggestion.get("data") or {}).get("finance") or {}
+    lines = ["⚠️ *Штрафы (DaData)*"]
+    if not isinstance(finance, dict) or not finance:
+        lines.append("Данные о штрафах недоступны на текущем тарифе DaData.")
+        return "\n".join(lines)
+
+    year = _s(finance.get("year"), "—")
+    penalty = _format_money(finance.get("penalty"))
+    lines.append(f"Год: {_md(year)}")
+    lines.append(f"Штрафы: {_md(penalty)}")
+    return "\n".join(lines)
+
 def format_courts(suggestion: dict[str, Any]) -> str:
     data = suggestion.get("data", {})
     state = data.get("state") or {}
