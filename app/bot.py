@@ -21,7 +21,7 @@ from aiogram.types import (
 )
 
 from app.config import config
-from app.dadata_client import find_party_universal, normalize_query_input, validate_inn
+from app.dadata_client import find_by_id_party, normalize_query_input, validate_inn
 from app.db import log_request
 from app.formatters import (
     format_card,
@@ -29,6 +29,7 @@ from app.formatters import (
     format_courts,
     format_debts,
     format_founders,
+    format_penalties,
     format_requisites,
     format_turnover,
 )
@@ -36,7 +37,7 @@ from app.rate_limit import check_rate_limit
 
 logger = logging.getLogger(__name__)
 
-WELCOME_TEXT = "Отправьте ИНН / ОГРН / название — верну короткую карточку и кнопки разделов."
+WELCOME_TEXT = "Отправьте ИНН (10 или 12 цифр) — верну карточку и кнопки разделов."
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="🔎 Проверить")]],
     resize_keyboard=True,
@@ -80,6 +81,7 @@ def _base_inline(context_key: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="⚖️ Суды", callback_data=f"courts:{context_key}"),
                 InlineKeyboardButton(text="💰 Оборот", callback_data=f"turnover:{context_key}"),
                 InlineKeyboardButton(text="🧾 Долги", callback_data=f"debts:{context_key}"),
+                InlineKeyboardButton(text="⚠️ Штрафы", callback_data=f"penalties:{context_key}"),
             ],
             [
                 InlineKeyboardButton(text="📄 Реквизиты", callback_data=f"requisites:{context_key}"),
@@ -114,11 +116,11 @@ async def _lookup_and_reply(message: Message, query_text: str) -> None:
         return
 
     query, query_kind = normalize_query_input(query_text)
-    if not query:
-        await message.answer("Пришлите ИНН, ОГРН или название компании.")
+    if query_kind != "inn":
+        await message.answer("Поддерживается только ИНН: 10 или 12 цифр.")
         return
 
-    if db_pool is not None and query_kind in {"inn", "ogrn"}:
+    if db_pool is not None:
         try:
             await log_request(db_pool, query)
         except Exception as exc:
@@ -126,7 +128,7 @@ async def _lookup_and_reply(message: Message, query_text: str) -> None:
 
     waiting_msg = await message.answer("🔍 Ищу данные…")
     try:
-        data = await find_party_universal(config.DADATA_API_KEY, query, count=1)
+        data = await find_by_id_party(config.DADATA_API_KEY, query, count=1)
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         if code == 401:
@@ -149,7 +151,7 @@ async def _lookup_and_reply(message: Message, query_text: str) -> None:
 
     suggestions: list[dict[str, Any]] = data.get("suggestions", [])
     if not suggestions:
-        await waiting_msg.edit_text("Ничего не нашёл. Проверьте ИНН/ОГРН или уточните название.")
+        await waiting_msg.edit_text("Ничего не нашёл. Проверьте ИНН.")
         return
 
     suggestion = suggestions[0]
@@ -178,7 +180,7 @@ async def process_query(message: Message, state: FSMContext) -> None:
     await state.clear()
     query = (message.text or "").strip()
     if not query:
-        await message.answer("Пришлите ИНН, ОГРН или название компании.")
+        await message.answer("Пришлите ИНН: 10 или 12 цифр.")
         return
 
     user_id = message.from_user.id if message.from_user else 0
@@ -197,10 +199,10 @@ async def fallback_handler(message: Message) -> None:
 async def cb_new_search(query: CallbackQuery) -> None:
     await query.answer()
     if query.message is not None:
-        await query.message.answer("Ок. Пришлите новый ИНН/ОГРН/название.")
+        await query.message.answer("Ок. Пришлите новый ИНН.")
 
 
-@router.callback_query(F.data.regexp(r"^(card|courts|turnover|debts|requisites|contacts|founders):"))
+@router.callback_query(F.data.regexp(r"^(card|courts|turnover|debts|penalties|requisites|contacts|founders):"))
 async def cb_sections(query: CallbackQuery) -> None:
     raw = query.data or ""
     action, context_key = raw.split(":", 1)
@@ -209,7 +211,7 @@ async def cb_sections(query: CallbackQuery) -> None:
     if party is None:
         await query.answer("Кэш истёк", show_alert=True)
         if query.message is not None:
-            await query.message.answer("Кэш истёк. Пришлите ИНН/ОГРН/название заново.")
+            await query.message.answer("Кэш истёк. Пришлите ИНН заново.")
         return
 
     await query.answer()
@@ -224,6 +226,8 @@ async def cb_sections(query: CallbackQuery) -> None:
         text = format_turnover(party)
     elif action == "debts":
         text = format_debts(party)
+    elif action == "penalties":
+        text = format_penalties(party)
     elif action == "contacts":
         text = format_contacts(party)
     elif action == "founders":
