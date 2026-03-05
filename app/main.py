@@ -6,9 +6,6 @@ import sys
 from json import JSONDecodeError
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
-
-if __package__ in (None, ""):
-
 from aiogram import Bot
 from pydantic import ValidationError
 from aiogram.types import Update
