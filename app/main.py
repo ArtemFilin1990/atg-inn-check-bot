@@ -1,9 +1,20 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from json import JSONDecodeError
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+
+def _ensure_project_root_on_syspath(module_file: str) -> None:
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(module_file)))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+
+if __package__ in (None, ""):
+    _ensure_project_root_on_syspath(__file__)
 
 from aiogram import Bot
 from pydantic import ValidationError
