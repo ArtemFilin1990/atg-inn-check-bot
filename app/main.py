@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 if __package__ in (None, ""):
-    sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from aiogram import Bot
 from pydantic import ValidationError
