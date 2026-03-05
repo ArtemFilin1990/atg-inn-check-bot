@@ -6,6 +6,7 @@ from app.formatters import (
     format_courts,
     format_debts,
     format_founders,
+    format_penalties,
     format_requisites,
     format_turnover,
 )
@@ -87,3 +88,9 @@ def test_format_debts_contains_debt_penalty():
 def test_format_courts_mentions_provider_for_full_cases():
     text = format_courts(FIXTURE_SUGGESTION)
     assert "провайдера" in text
+
+
+def test_format_penalties_contains_penalty():
+    text = format_penalties(FIXTURE_SUGGESTION)
+    assert "Штрафы" in text
+    assert "3" in text
