@@ -132,13 +132,37 @@ async def test_lifespan_strips_trailing_slash_from_webhook(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_lookup_and_reply_rejects_non_inn_input(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_lookup_and_reply_rejects_empty_input(monkeypatch: pytest.MonkeyPatch) -> None:
     message = AsyncMock()
     monkeypatch.setattr(bot_module.config, "DADATA_API_KEY", "key")
 
+    await bot_module._lookup_and_reply(message, "   ")
+
+    message.answer.assert_awaited_once_with("Пришлите ИНН, ОГРН или название компании.")
+
+
+@pytest.mark.asyncio
+async def test_lookup_and_reply_handles_company_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    waiting = AsyncMock()
+    message = AsyncMock()
+    message.answer = AsyncMock(return_value=waiting)
+
+    monkeypatch.setattr(bot_module.config, "DADATA_API_KEY", "key")
+    monkeypatch.setattr(bot_module, "db_pool", None)
+    mock_universal = AsyncMock(return_value={
+        "suggestions": [
+            {
+                "value": "ООО Ромашка",
+                "data": {"inn": "7707083893", "ogrn": "1027700132195", "kpp": "773601001"},
+            }
+        ]
+    })
+    monkeypatch.setattr(bot_module, "find_party_universal", mock_universal)
+
     await bot_module._lookup_and_reply(message, "ООО Ромашка")
 
-    message.answer.assert_awaited_once_with("Поддерживается только ИНН: 10 или 12 цифр.")
+    mock_universal.assert_awaited_once_with("key", "ООО Ромашка", count=1)
+    waiting.edit_text.assert_awaited()
 
 
 @pytest.mark.asyncio

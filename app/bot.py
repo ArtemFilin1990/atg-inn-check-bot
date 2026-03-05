@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 import asyncpg
@@ -9,8 +8,8 @@ import httpx
 from aiogram import Dispatcher, F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from cachetools import TTLCache
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -21,7 +20,7 @@ from aiogram.types import (
 )
 
 from app.config import config
-from app.dadata_client import find_by_id_party, normalize_query_input, validate_inn, validate_ogrn
+from app.dadata_client import find_by_id_party, find_party_universal, normalize_query_input, validate_inn, validate_ogrn
 from app.db import log_request
 from app.formatters import (
     format_card,
@@ -37,35 +36,24 @@ from app.rate_limit import check_rate_limit
 
 logger = logging.getLogger(__name__)
 
-WELCOME_TEXT = "Отправьте ИНН (10 или 12 цифр) — верну карточку и кнопки разделов."
+WELCOME_TEXT = "Отправьте ИНН, ОГРН или название компании — верну карточку и кнопки разделов."
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="🔎 Проверить")]],
     resize_keyboard=True,
 )
 
 CACHE_TTL_SEC = 600
-_context_cache: dict[str, dict[str, Any]] = {}
-
-
-class InnForm(StatesGroup):
-    waiting_query = State()
-
+_context_cache: TTLCache = TTLCache(maxsize=1000, ttl=CACHE_TTL_SEC)
 
 router = Router()
 
 
 def _cache_set(key: str, value: dict[str, Any]) -> None:
-    _context_cache[key] = {"ts": time.time(), "value": value}
+    _context_cache[key] = value
 
 
 def _cache_get(key: str) -> dict[str, Any] | None:
-    item = _context_cache.get(key)
-    if not item:
-        return None
-    if time.time() - item["ts"] > CACHE_TTL_SEC:
-        _context_cache.pop(key, None)
-        return None
-    return item["value"]
+    return _context_cache.get(key)
 
 
 def _build_context_key(data: dict[str, Any]) -> str:
@@ -116,8 +104,8 @@ async def _lookup_and_reply(message: Message, query_text: str) -> None:
         return
 
     query, query_kind = normalize_query_input(query_text)
-    if query_kind != "inn":
-        await message.answer("Поддерживается только ИНН: 10 или 12 цифр.")
+    if not query:
+        await message.answer("Пришлите ИНН, ОГРН или название компании.")
         return
 
     if db_pool is not None:
@@ -128,7 +116,10 @@ async def _lookup_and_reply(message: Message, query_text: str) -> None:
 
     waiting_msg = await message.answer("🔍 Ищу данные…")
     try:
-        data = await find_by_id_party(config.DADATA_API_KEY, query, count=1)
+        if query_kind in {"inn", "ogrn"}:
+            data = await find_by_id_party(config.DADATA_API_KEY, query, count=1)
+        else:
+            data = await find_party_universal(config.DADATA_API_KEY, query_text, count=1)
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         if code == 401:
@@ -180,7 +171,7 @@ async def process_query(message: Message, state: FSMContext) -> None:
     await state.clear()
     query = (message.text or "").strip()
     if not query:
-        await message.answer("Пришлите ИНН: 10 или 12 цифр.")
+        await message.answer("Пришлите ИНН, ОГРН или название компании.")
         return
 
     user_id = message.from_user.id if message.from_user else 0
