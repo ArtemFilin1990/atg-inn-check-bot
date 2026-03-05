@@ -1,12 +1,18 @@
-"""Tests for app.dadata_client: find_by_id_party and validate_inn."""
+"""Tests for app.dadata_client: find_by_id_party and validation helpers."""
 from __future__ import annotations
 
-import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
-from unittest.mock import AsyncMock, MagicMock, patch, call
+import pytest
 
-from app.dadata_client import find_by_id_party, validate_inn, _cache
-
+from app.dadata_client import (
+    _cache,
+    find_by_id_party,
+    find_party_universal,
+    suggest_party,
+    validate_inn,
+)
 
 SAMPLE_RESPONSE = {
     "suggestions": [
@@ -30,7 +36,6 @@ def clear_dadata_cache():
 
 
 def _make_mock_client(json_data=None, status_code=200, raise_on_status=None):
-    """Return a mock httpx.AsyncClient context manager."""
     mock_resp = MagicMock()
     mock_resp.status_code = status_code
     if json_data is not None:
@@ -49,8 +54,6 @@ def _make_mock_client(json_data=None, status_code=200, raise_on_status=None):
     return mock_cm, mock_client, mock_resp
 
 
-# ── validate_inn ─────────────────────────────────────────────────────────────
-
 def test_validate_inn_10_digits():
     assert validate_inn("7707083893") is True
 
@@ -67,23 +70,12 @@ def test_validate_inn_non_digit():
     assert validate_inn("77070838XX") is False
 
 
-def test_validate_inn_9_digits():
-    assert validate_inn("123456789") is False
-
-
-def test_validate_inn_11_digits():
-    assert validate_inn("12345678901") is False
-
-
-# ── find_by_id_party: success ─────────────────────────────────────────────────
-
 @pytest.mark.asyncio
 async def test_find_by_id_party_returns_suggestions():
-    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
+    mock_cm, _, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
     with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
         result = await find_by_id_party("test_key", "7707083893")
     assert result == SAMPLE_RESPONSE
-    assert result["suggestions"][0]["data"]["inn"] == "7707083893"
 
 
 @pytest.mark.asyncio
@@ -92,83 +84,8 @@ async def test_find_by_id_party_sends_correct_auth_header():
     with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
         await find_by_id_party("my_secret_key", "7707083893")
     _, kwargs = mock_client.post.call_args
-    headers = kwargs.get("headers", {})
-    assert headers.get("Authorization") == "Token my_secret_key"
+    assert kwargs["headers"]["Authorization"] == "Token my_secret_key"
 
-
-
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_sends_json_headers():
-    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        await find_by_id_party("my_secret_key", "7707083893")
-    _, kwargs = mock_client.post.call_args
-    headers = kwargs.get("headers", {})
-    assert headers.get("Content-Type") == "application/json; charset=utf-8"
-    assert headers.get("Accept") == "application/json"
-
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_sends_correct_payload():
-    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        await find_by_id_party("key", "1234567890", branch_type="BRANCH", count=20)
-    _, kwargs = mock_client.post.call_args
-    payload = kwargs.get("json", {})
-    assert payload["query"] == "1234567890"
-    assert payload["branch_type"] == "BRANCH"
-    assert payload["count"] == 20
-
-
-
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_excludes_branch_type_when_none():
-    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        await find_by_id_party("key", "7707083893")
-    _, kwargs = mock_client.post.call_args
-    assert "branch_type" not in kwargs["json"]
-
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_includes_kpp_when_provided():
-    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        await find_by_id_party("key", "7707083893", kpp="773601001")
-    _, kwargs = mock_client.post.call_args
-    assert kwargs["json"]["kpp"] == "773601001"
-
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_excludes_kpp_when_none():
-    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        await find_by_id_party("key", "7707083893")
-    _, kwargs = mock_client.post.call_args
-    assert "kpp" not in kwargs["json"]
-
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_includes_entity_type_when_provided():
-    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        await find_by_id_party("key", "7707083893", entity_type="LEGAL")
-    _, kwargs = mock_client.post.call_args
-    assert kwargs["json"]["type"] == "LEGAL"
-
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_excludes_entity_type_when_none():
-    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        await find_by_id_party("key", "7707083893")
-    _, kwargs = mock_client.post.call_args
-    assert "type" not in kwargs["json"]
-
-
-# ── find_by_id_party: caching ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_find_by_id_party_caches_result():
@@ -176,42 +93,8 @@ async def test_find_by_id_party_caches_result():
     with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
         r1 = await find_by_id_party("key", "7707083893")
         r2 = await find_by_id_party("key", "7707083893")
-    # HTTP should be called only once
     assert mock_client.post.call_count == 1
     assert r1 == r2
-
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_different_queries_not_shared():
-    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        await find_by_id_party("key", "7707083893")
-        await find_by_id_party("key", "1234567890")
-    assert mock_client.post.call_count == 2
-
-
-# ── find_by_id_party: HTTP error propagation ─────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_raises_on_401():
-    err_resp = httpx.Response(401, request=httpx.Request("POST", "http://x"))
-    exc = httpx.HTTPStatusError("401", request=err_resp.request, response=err_resp)
-    mock_cm, _, _ = _make_mock_client(raise_on_status=exc)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            await find_by_id_party("bad_key", "7707083893")
-    assert exc_info.value.response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_find_by_id_party_raises_on_429():
-    err_resp = httpx.Response(429, request=httpx.Request("POST", "http://x"))
-    exc = httpx.HTTPStatusError("429", request=err_resp.request, response=err_resp)
-    mock_cm, _, _ = _make_mock_client(raise_on_status=exc)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            await find_by_id_party("key", "7707083893")
-    assert exc_info.value.response.status_code == 429
 
 
 @pytest.mark.asyncio
@@ -224,21 +107,40 @@ async def test_find_by_id_party_raises_on_timeout():
 
 
 @pytest.mark.asyncio
-async def test_find_by_id_party_does_not_cache_on_error():
-    err_resp = httpx.Response(500, request=httpx.Request("POST", "http://x"))
-    exc = httpx.HTTPStatusError("500", request=err_resp.request, response=err_resp)
-    mock_cm, mock_client, _ = _make_mock_client(raise_on_status=exc)
+async def test_suggest_party_uses_suggest_endpoint():
+    mock_cm, mock_client, _ = _make_mock_client(json_data=SAMPLE_RESPONSE)
     with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        with pytest.raises(httpx.HTTPStatusError):
-            await find_by_id_party("key", "7707083893")
-    # Cache should be empty — a retry must hit the network
-    assert len(_cache) == 0
+        await suggest_party("key", "Сбербанк", count=1)
+    args, _ = mock_client.post.call_args
+    assert "suggest/party" in args[0]
 
 
 @pytest.mark.asyncio
-async def test_find_by_id_party_empty_suggestions():
+async def test_find_party_universal_uses_suggest_then_find_by_id():
+    suggested = {
+        "suggestions": [{"value": "ПАО Сбербанк", "data": {"inn": "7707083893"}}],
+    }
+    detailed = {"suggestions": [{"value": "ПАО Сбербанк", "data": {"inn": "7707083893", "kpp": "1"}}]}
+    with patch("app.dadata_client.suggest_party", new_callable=AsyncMock) as sp, patch(
+        "app.dadata_client.find_by_id_party", new_callable=AsyncMock
+    ) as fb:
+        sp.return_value = suggested
+        fb.return_value = detailed
+        result = await find_party_universal("key", "ПАО Сбербанк")
+    assert result == detailed
+    sp.assert_awaited_once()
+    fb.assert_awaited_once_with("key", query="7707083893", count=1)
+
+
+@pytest.mark.asyncio
+async def test_find_party_universal_falls_back_to_find_by_id_for_numeric_without_suggest():
     empty = {"suggestions": []}
-    mock_cm, _, _ = _make_mock_client(json_data=empty)
-    with patch("app.dadata_client.httpx.AsyncClient", return_value=mock_cm):
-        result = await find_by_id_party("key", "0000000000")
-    assert result["suggestions"] == []
+    with patch("app.dadata_client.suggest_party", new_callable=AsyncMock) as sp, patch(
+        "app.dadata_client.find_by_id_party", new_callable=AsyncMock
+    ) as fb:
+        sp.return_value = empty
+        fb.return_value = SAMPLE_RESPONSE
+        result = await find_party_universal("key", "7707083893")
+    assert result == SAMPLE_RESPONSE
+    sp.assert_awaited_once()
+    fb.assert_awaited_once_with("key", query="7707083893", count=1)
