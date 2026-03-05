@@ -1,7 +1,11 @@
 # atg-inn-check-bot
 
-Telegram-бот на aiogram v3 для проверки компаний по ИНН через DaData API.  
-Деплой: Amvera, режим: webhook, веб-фреймворк: FastAPI + uvicorn.
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)
+![aiogram 3.x](https://img.shields.io/badge/aiogram-3.x-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688)
+
+Telegram-бот на **aiogram v3** для быстрой и удобной проверки юридических лиц и ИП по ИНН через **DaData API**.  
+Оптимизирован для деплоя на **Amvera** (режим webhook, на базе **FastAPI + uvicorn**).
 
 ---
 
@@ -188,7 +192,7 @@ Healthcheck доступен по `GET /health`.
 
 ## Структура проекта
 
-```
+```text
 app/
   main.py           # FastAPI приложение + webhook wiring + setWebhook
   bot.py            # Handlers, keyboards, FSM states (aiogram v3)
@@ -196,7 +200,6 @@ app/
   dadata_client.py  # Async httpx клиент DaData + TTLCache 15 мин
   db.py             # asyncpg pool + init таблицы + логирование запросов
   formatters.py     # Форматирование карточки / деталей / реквизитов / филиалов
-  rate_limit.py     # Rate limit: per-user 1 req/0.5 сек
 tests/
   test_validation.py  # Unit-тесты валидации ИНН
   test_formatters.py  # Unit-тесты форматирования карточки
