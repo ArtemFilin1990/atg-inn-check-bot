@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import importlib
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 from unittest.mock import AsyncMock, patch
 
-from app import bot as bot_module
 from app.dadata_client import find_by_id_party
 from app.formatters import format_card
 
@@ -76,23 +73,6 @@ async def test_fallback_handler_replies_with_welcome() -> None:
     assert kwargs.get("reply_markup") is MAIN_KEYBOARD
 
 
-def test_parse_callback_data_validates_prefix_and_inn() -> None:
-    assert bot_module._parse_callback_data("details:7707083893", "details") == "7707083893"
-    assert bot_module._parse_callback_data("details:abc", "details") is None
-    assert bot_module._parse_callback_data("oops:7707083893", "details") is None
-
-
-def test_safe_requisites_code_block_breaks_fences() -> None:
-    assert "```" not in bot_module._safe_requisites_code_block("line ``` content")
-
-
-def test_invalid_postgres_port_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POSTGRES_PORT", "invalid")
-    import app.config as cfg
-
-    importlib.reload(cfg)
-    assert cfg.config.POSTGRES_PORT == 5432
-
 
 @pytest.mark.asyncio
 async def test_webhook_handles_json_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,7 +103,6 @@ async def test_lifespan_strips_trailing_slash_from_webhook(monkeypatch: pytest.M
     monkeypatch.setattr(main.config, "TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setattr(main.config, "WEBHOOK_URL", "https://example.com/")
     monkeypatch.setattr(main, "Bot", lambda token: bot_stub)
-    monkeypatch.setattr(main, "postgres_enabled", lambda: False)
 
     async with main.lifespan(main.app):
         pass

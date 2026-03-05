@@ -1,6 +1,6 @@
 import copy
 
-from app.formatters import format_card, format_details, format_requisites
+from app.formatters import format_card
 
 # Minimal fixture matching DaData findById/party response structure
 FIXTURE_SUGGESTION = {
@@ -99,17 +99,6 @@ def test_format_card_founders():
 def test_format_card_management():
     text = format_card(FIXTURE_SUGGESTION)
     assert "Греф" in text
-
-
-def test_format_details():
-    text = format_details(FIXTURE_SUGGESTION)
-    assert "Подробности" in text
-
-
-def test_format_requisites():
-    text = format_requisites(FIXTURE_SUGGESTION)
-    assert "7707083893" in text
-    assert "СБЕРБАНК" in text
 
 
 def test_format_card_address_qc_warning():
