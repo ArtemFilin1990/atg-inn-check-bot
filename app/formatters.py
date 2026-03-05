@@ -68,8 +68,9 @@ def format_requisites(suggestion: dict[str, Any]) -> str:
     data = suggestion.get("data", {})
     name_obj = data.get("name") or {}
     name = _s(name_obj.get("full_with_opf") or name_obj.get("short_with_opf") or suggestion.get("value"), "—")
+    name_clean = name.replace("`", "'")
     lines = [
-        f"Наименование: {name.replace('`', "'")}",
+        f"Наименование: {name_clean}",
         f"ИНН: {_s(data.get('inn'), '—')}",
         f"ОГРН: {_s(data.get('ogrn'), '—')}",
         f"КПП: {_s(data.get('kpp'), '—')}",
