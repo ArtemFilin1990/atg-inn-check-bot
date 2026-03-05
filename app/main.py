@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from json import JSONDecodeError
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+
+if __package__ in (None, ""):
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
 from aiogram import Bot
 from pydantic import ValidationError
