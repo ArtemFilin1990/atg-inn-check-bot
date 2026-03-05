@@ -21,6 +21,7 @@ from aiogram.types import (
 )
 
 from app.config import config
+from app.dadata_client import find_by_id_party, normalize_query_input, validate_inn, validate_ogrn
 from app.db import log_request
 from app.formatters import (
     format_card,
