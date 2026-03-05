@@ -9,5 +9,6 @@ COPY app/ ./app/
 COPY app.py ./
 
 ENV PORT=3000
+ENV PYTHONPATH=/app
 
 CMD uvicorn app.main:app --host 0.0.0.0 --port $PORT
