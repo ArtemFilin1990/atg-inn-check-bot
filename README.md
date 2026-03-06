@@ -194,6 +194,192 @@ Healthcheck доступен по `GET /health`.
 
 ---
 
+## Решение: деплой DaData MCP на Amvera под домен ewerest.ru
+
+## Шаги
+
+**1. Подготовка репозитория**
+
+```bash
+# Распакуй архив
+tar -xzf dadata-mcp-server.tar.gz
+cd dadata-mcp
+
+# Инициализируй Git
+git init
+git add .
+git commit -m "DaData MCP server"
+```
+
+**2. Создай конфиг Amvera**
+
+```bash
+cat > amvera.yml << 'EOF'
+meta:
+  environment: python
+  toolchain:
+    name: python
+    version: 3.11
+
+build:
+  - pip install -r requirements.txt
+
+run:
+  command: python dadata_mcp.py
+  port: 8080
+
+env:
+  - DADATA_API_KEY
+  - DADATA_SECRET_KEY
+EOF
+
+git add amvera.yml
+git commit -m "Add Amvera config"
+```
+
+**3. Создай проект на Amvera**
+
+1. Зайди на <https://amvera.ru>
+2. Новый проект → Python
+3. Подключи Git репозиторий
+4. Домен: `dadata.ewerest.ru` или `api.ewerest.ru/dadata`
+
+**4. Настрой переменные окружения**
+
+В настройках Amvera → Environment Variables:
+
+```text
+DADATA_API_KEY = твой_api_key
+DADATA_SECRET_KEY = твой_secret_key
+```
+
+**5. Деплой**
+
+```bash
+git push amvera main
+```
+
+**6. Настрой DNS**
+
+В REG.RU (ewerest.ru):
+
+```text
+Тип: CNAME
+Имя: dadata (или api)
+Значение: [домен_из_Amvera].amvera.app
+```
+
+**7. Обнови конфиг Claude Desktop**
+
+```json
+{
+  "mcpServers": {
+    "dadata": {
+      "command": "curl",
+      "args": [
+        "-X", "POST",
+        "https://dadata.ewerest.ru/tools/call",
+        "-H", "Content-Type: application/json",
+        "-d", "@-"
+      ]
+    }
+  }
+}
+```
+
+## Эффект
+
+**Доступ:**
+- Claude Desktop (Артём) ✓
+- Telegram бот ✓
+- Bitrix24 webhook ✓
+- Сайт ewerest.ru ✓
+- Вся команда ✓
+
+**Endpoint:**
+```text
+https://dadata.ewerest.ru/api/find-by-inn
+https://dadata.ewerest.ru/api/suggest-party
+https://dadata.ewerest.ru/api/clean-address
+```
+
+**Масштабирование:**
+- 100+ запросов/сек
+- Автоматические рестарты
+- SSL из коробки
+
+## Риски
+
+**Если домен занят:**
+→ Использовать поддомен api.ewerest.ru/dadata
+
+**Если превышен лимит Amvera:**
+→ Бесплатный тариф: 512MB RAM, может не хватить
+→ Перейти на платный: 200₽/мес
+
+**Если MCP не поддерживает HTTP:**
+→ Claude Desktop работает только со stdio/SSE
+→ Нужен wrapper или использовать для Telegram/Bitrix24
+
+## Альтернативы
+
+**Вместо HTTP endpoint:**
+SSE (Server-Sent Events) для Claude Desktop:
+
+```python
+# Добавить в dadata_mcp.py
+from mcp.server.sse import SseServerTransport
+
+async def main():
+    async with mcp.run_sse() as streams:
+        # SSE endpoint
+        pass
+```
+
+**Вместо Amvera:**
+- Railway (аналогично, но дороже)
+- Render (бесплатный tier, но медленнее)
+- VPS (Timeweb, 200₽/мес, больше контроля)
+
+## Неизвестно
+
+**Claude Desktop поддержка HTTP MCP:**
+→ [[TBD: проверить документацию MCP]]
+→ Возможно нужен stdio transport локально
+→ HTTP только для внешних интеграций
+
+**Лимиты Amvera бесплатного плана:**
+→ [[TBD: уточнить на amvera.ru/pricing]]
+→ Может потребоваться платный тариф
+
+**Настройки ewerest.ru DNS:**
+→ [[TBD: доступ к панели REG.RU]]
+→ Время пропагации: до 24 часов
+
+## Рекомендация
+
+**Для Claude Desktop:**
+Оставить локально (stdio transport)
+
+**Для команды:**
+Деплой на Amvera (HTTP API)
+
+**Гибридная схема:**
+```text
+Claude Desktop (локально)
+  └─ stdio: dadata_mcp.py
+
+Команда (удаленно)
+  └─ HTTP: https://dadata.ewerest.ru
+      ├─ Telegram Bot
+      ├─ Bitrix24
+      └─ Website
+```
+
+Нужен ли HTTP endpoint для Claude или только для интеграций?
+
+---
+
 ## Методы DaData
 
 Подтверждённые в коде проекта методы и параметры DaData (включая соответствие логике страницы `api/find-party` и примечание по `dadata-py`) вынесены в отдельный документ: `docs/dadata_methods.md`.
