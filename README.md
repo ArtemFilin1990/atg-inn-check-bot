@@ -194,6 +194,338 @@ Healthcheck доступен по `GET /health`.
 
 ---
 
+## РЕШЕНИЕ
+
+Архитектура для множественных MCP серверов на Amvera.
+
+## Шаги
+
+**1. Раздели на структуры (monorepo)**
+
+```bash
+# Создай общий репозиторий
+mkdir everest-mcp-hub
+cd everest-mcp-hub
+```
+
+**Структура A — MCP серверы (`servers/`)**
+
+```text
+servers/
+├── dadata/
+│   ├── server.py
+│   └── requirements.txt
+├── bitrix24/
+│   ├── server.py
+│   └── requirements.txt
+├── bearings-catalog/
+│   ├── server.py
+│   └── requirements.txt
+└── telegram/
+    ├── server.py
+    └── requirements.txt
+```
+
+**Структура B — Gateway (`gateway/`)**
+
+```text
+gateway/
+├── main.py      # API Gateway
+└── router.py    # Роутинг запросов
+```
+
+**Структура C — Общие модули (`shared/`)**
+
+```text
+shared/
+├── auth.py      # Общая авторизация
+├── cache.py     # Redis кеш
+└── logger.py    # Логирование
+```
+
+**Структура D — Корень репозитория**
+
+```text
+everest-mcp-hub/
+├── servers/
+├── gateway/
+├── shared/
+├── amvera.yml
+├── requirements.txt
+└── README.md
+```
+
+**2. API Gateway (main.py)**
+
+```python
+"""Единая точка входа для всех MCP серверов Эверест."""
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Any, Dict
+import importlib
+
+app = FastAPI(title="Everest MCP Hub")
+
+# Реестр серверов
+SERVERS = {
+    "dadata": "servers.dadata.server",
+    "bitrix24": "servers.bitrix24.server",
+    "bearings": "servers.bearings_catalog.server",
+    "telegram": "servers.telegram.server"
+}
+
+
+class MCPRequest(BaseModel):
+    server: str  # dadata, bitrix24, bearings, telegram
+    tool: str    # имя инструмента
+    params: Dict[str, Any]
+
+
+@app.post("/mcp/call")
+async def call_mcp_tool(request: MCPRequest):
+    """Роутинг запросов к нужному MCP серверу."""
+    if request.server not in SERVERS:
+        raise HTTPException(404, f"Server {request.server} not found")
+
+    # Динамическая загрузка сервера
+    module = importlib.import_module(SERVERS[request.server])
+
+    # Вызов инструмента
+    result = await module.call_tool(request.tool, request.params)
+
+    return {
+        "server": request.server,
+        "tool": request.tool,
+        "result": result
+    }
+
+
+@app.get("/mcp/servers")
+async def list_servers():
+    """Список доступных MCP серверов."""
+    return {
+        "servers": [
+            {
+                "name": "dadata",
+                "description": "Проверка контрагентов по ИНН",
+                "tools": ["find_by_inn", "suggest_party", "clean_address"]
+            },
+            {
+                "name": "bitrix24",
+                "description": "Интеграция с Bitrix24 CRM",
+                "tools": ["create_deal", "update_company", "get_lead"]
+            },
+            {
+                "name": "bearings",
+                "description": "Каталог подшипников ГОСТ⇄ISO",
+                "tools": ["find_analog", "get_specs", "search_bearing"]
+            },
+            {
+                "name": "telegram",
+                "description": "Управление Telegram ботами",
+                "tools": ["send_message", "create_keyboard", "get_updates"]
+            }
+        ]
+    }
+
+
+@app.get("/health")
+async def health():
+    """Проверка работоспособности."""
+    return {"status": "ok", "servers": len(SERVERS)}
+```
+
+**3. Конфиг Amvera (amvera.yml)**
+
+```yaml
+meta:
+  environment: python
+  toolchain:
+    name: python
+    version: 3.11
+
+build:
+  - pip install -r requirements.txt
+  - pip install -r servers/dadata/requirements.txt
+  - pip install -r servers/bitrix24/requirements.txt
+  - pip install -r servers/bearings-catalog/requirements.txt
+
+run:
+  command: uvicorn gateway.main:app --host 0.0.0.0 --port 8080
+  port: 8080
+
+env:
+  # DaData
+  - DADATA_API_KEY
+  - DADATA_SECRET_KEY
+
+  # Bitrix24
+  - BITRIX24_WEBHOOK_URL
+  - BITRIX24_DOMAIN
+
+  # Telegram
+  - TELEGRAM_BOT_TOKEN
+
+  # Общие
+  - REDIS_URL
+  - SECRET_KEY
+```
+
+**4. Общий requirements.txt**
+
+```txt
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+httpx>=0.27.0
+pydantic>=2.0.0
+redis>=5.0.0
+python-dotenv>=1.0.0
+```
+
+**5. Claude Desktop конфиг**
+
+```json
+{
+  "mcpServers": {
+    "everest-hub": {
+      "command": "python",
+      "args": ["-m", "everest_mcp_client"],
+      "env": {
+        "EVEREST_MCP_URL": "https://api.ewerest.ru"
+      }
+    }
+  }
+}
+```
+
+**6. Клиент для Claude (everest_mcp_client.py)**
+
+```python
+"""Клиент для подключения Claude к Everest MCP Hub."""
+
+import os
+import httpx
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("everest_hub")
+hub_url = os.getenv("EVEREST_MCP_URL", "https://api.ewerest.ru")
+
+# Динамическая регистрация всех инструментов
+async def init_tools():
+    """Получить список инструментов с сервера."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{hub_url}/mcp/servers")
+        servers = response.json()["servers"]
+
+        for server in servers:
+            for tool_name in server["tools"]:
+                register_tool(server["name"], tool_name)
+
+
+def register_tool(server: str, tool: str):
+    """Регистрация инструмента в MCP."""
+
+    @mcp.tool(name=f"{server}_{tool}")
+    async def dynamic_tool(**params):
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{hub_url}/mcp/call",
+                json={
+                    "server": server,
+                    "tool": tool,
+                    "params": params
+                }
+            )
+            return response.json()["result"]
+```
+
+## Эффект
+
+**Централизация:**
+- Один домен: api.ewerest.ru
+- Один деплой: все серверы сразу
+- Одна точка мониторинга
+
+**Масштабируемость:**
+- Добавление нового MCP: 1 файл в servers/
+- Нет изменений в Claude Desktop
+- Автоматическая регистрация инструментов
+
+**Переиспользование:**
+```python
+# Общий кеш для всех серверов
+from shared.cache import cache
+
+@cache.memoize(ttl=3600)
+async def find_by_inn(inn: str):
+    # Кеш работает для всех серверов
+    ...
+```
+
+## Риски
+
+**Если один сервер упал:**
+→ Не влияет на остальные (изолированные модули)
+
+**Если превышен лимит памяти:**
+→ Разделить на несколько Amvera проектов:
+```text
+dadata.ewerest.ru  → только DaData
+bitrix.ewerest.ru  → только Bitrix24
+api.ewerest.ru     → gateway (роутинг)
+```
+
+**Если сложная зависимость:**
+→ Отдельный контейнер для тяжелых серверов
+
+## Альтернативы
+
+**Вместо monorepo:**
+- Отдельный репозиторий для каждого MCP
+- Поддомены: dadata.ewerest.ru, bitrix.ewerest.ru
+- Независимый деплой
+
+**Вместо API Gateway:**
+- Прямое подключение к каждому серверу
+- Claude Desktop знает все endpoints
+- Больше гибкости, сложнее управление
+
+## Неизвестно
+
+**Список будущих MCP серверов:**
+→ [[TBD: какие еще интеграции планируются?]]
+→ 1С? Почта? Склад? Аналитика?
+
+**Нагрузка на систему:**
+→ [[TBD: сколько запросов/день?]]
+→ Нужен ли Redis или достаточно in-memory?
+
+**Приоритет разработки:**
+→ [[TBD: какой MCP делать следующим?]]
+→ DaData → Bitrix24 → Bearings → Telegram?
+
+## Следующие MCP для Эверест
+
+**Приоритет 1 (критичные):**
+1. ✓ DaData (проверка контрагентов)
+2. Bitrix24 (CRM операции)
+3. Bearings Catalog (поиск аналогов ГОСТ⇄ISO)
+
+**Приоритет 2 (полезные):**
+4. Telegram Manager (управление ботами)
+5. Email (отправка КП, счетов)
+6. 1С Integration (выгрузка заказов)
+
+**Приоритет 3 (оптимизация):**
+7. Analytics (отчеты, метрики)
+8. Warehouse (остатки на складе)
+9. Delivery (расчет доставки)
+
+Какой MCP создать следующим?
+
+---
+
 ## Методы DaData
 
 Подтверждённые в коде проекта методы и параметры DaData (включая соответствие логике страницы `api/find-party` и примечание по `dadata-py`) вынесены в отдельный документ: `docs/dadata_methods.md`.
